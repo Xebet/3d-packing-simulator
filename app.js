@@ -495,22 +495,41 @@ function createPackingWorker() {
     return new Worker(blobURL);
 }
 
-// 多核并发异步装箱调度器
-function performParallelPacking(itemsToPack, binW, binH, binL, checkStability, supportRatio, biggerFirst, callback) {
-    const loadingModal = document.getElementById('loading-modal');
+// 辅助函数：根据物体的实际旋转后尺寸，动态逆向推导其在当前轴向下的 rotationType
+function getRotationTypeFromDimensions(item, rw, rh, rd) {
+    for (let r = 0; r < 6; r++) {
+        const [w, h, d] = item.getRotatedDimensions(r);
+        if (Math.abs(w - rw) < 0.1 && Math.abs(h - rh) < 0.1 && Math.abs(d - rd) < 0.1) {
+            return r;
+        }
+    }
+    return 0;
+}
+
+// 辅助函数：计算当前装载组合的容积利用率
+function calculateVolumeUtilization(packedItems, binW, binH, binL) {
+    const containerVolume = binW * binH * binL;
+    if (containerVolume <= 0) return 0;
+    let packedVol = 0;
+    packedItems.forEach(item => {
+        packedVol += item.rw * item.rh * item.rd;
+    });
+    return (packedVol / containerVolume) * 100;
+}
+
+// 单次特定空间朝向下的并发装箱执行器
+function runSinglePacking(itemsToPack, binW, binH, binL, checkStability, supportRatio, biggerFirst, callback, orientationIdx, totalOrientations) {
     const progressBar = document.getElementById('loading-progress');
-    
-    if (loadingModal) loadingModal.style.display = 'flex';
-    if (progressBar) progressBar.style.width = '0%';
+    const baseProgress = Math.floor((orientationIdx / totalOrientations) * 100);
+    const weight = Math.floor(100 / totalOrientations);
 
     // 降级保护：如果浏览器不支持 Web Worker
     if (typeof Worker === 'undefined') {
         setTimeout(() => {
             const packer = new Packer(binW, binH, binL);
             packer.pack(itemsToPack, { checkStability, supportRatio, biggerFirst });
-            if (loadingModal) loadingModal.style.display = 'none';
             callback(packer.items, packer.unpacked);
-        }, 50);
+        }, 10);
         return;
     }
 
@@ -527,7 +546,6 @@ function performParallelPacking(itemsToPack, binW, binH, binL, checkStability, s
     const cleanup = () => {
         finished = true;
         workers.forEach(w => w.terminate());
-        if (loadingModal) loadingModal.style.display = 'none';
     };
 
     // 1. 判断是否符合公维对齐层级拆分装载策略
@@ -603,6 +621,9 @@ function performParallelPacking(itemsToPack, binW, binH, binL, checkStability, s
                     if (finished) return;
                     if (e.data.status === 'success') {
                         cleanup();
+                        const progress = baseProgress + weight;
+                        if (progressBar) progressBar.style.width = `${progress}%`;
+                        
                         const packed = e.data.items.map(it => {
                             const item = new Item(it.id, it.name, it.w, it.h, it.d, it.color, it.weight);
                             item.x = it.x; item.y = it.y; item.z = it.z;
@@ -612,7 +633,8 @@ function performParallelPacking(itemsToPack, binW, binH, binL, checkStability, s
                         callback(packed, []);
                     } else {
                         partitionsFailed += (end - start);
-                        const progress = Math.min(40, Math.floor((partitionsFailed / totalPartitions) * 40));
+                        const stepProgress = Math.min(40, Math.floor((partitionsFailed / totalPartitions) * 40));
+                        const progress = baseProgress + Math.floor((stepProgress / 100) * weight);
                         if (progressBar) progressBar.style.width = `${progress}%`;
 
                         completedWorkers++;
@@ -658,9 +680,10 @@ function performParallelPacking(itemsToPack, binW, binH, binL, checkStability, s
                 if (finished) return;
                 completedWorkers++;
                 
-                const baseProgress = hasCommonDim ? 40 : 0;
-                const weight = hasCommonDim ? 60 : 100;
-                const progress = baseProgress + Math.floor((completedWorkers / workers.length) * weight);
+                const stepBase = hasCommonDim ? 40 : 0;
+                const stepWeight = hasCommonDim ? 60 : 100;
+                const stepProgress = stepBase + Math.floor((completedWorkers / workers.length) * stepWeight);
+                const progress = baseProgress + Math.floor((stepProgress / 100) * weight);
                 if (progressBar) progressBar.style.width = `${progress}%`;
 
                 if (e.data.status === 'success') {
@@ -700,6 +723,109 @@ function performParallelPacking(itemsToPack, binW, binH, binL, checkStability, s
             });
         }
     }
+}
+
+// 多核并发异步装箱调度器 (支持容器姿态自动优化)
+function performParallelPacking(itemsToPack, binW, binH, binL, checkStability, supportRatio, biggerFirst, callback) {
+    const loadingModal = document.getElementById('loading-modal');
+    const progressBar = document.getElementById('loading-progress');
+    
+    if (loadingModal) loadingModal.style.display = 'flex';
+    if (progressBar) progressBar.style.width = '0%';
+
+    // 定义三种空间重力堆叠姿态（以不同尺寸作为高度 H 堆叠轴）
+    const orientations = [
+        { perm: [0, 1, 2], w: binW, h: binH, d: binL }, // 姿态 1 (默认): 高度为 binH
+        { perm: [1, 0, 2], w: binH, h: binW, d: binL }, // 姿态 2 (调换W和H): 高度为 binW
+        { perm: [0, 2, 1], w: binW, h: binL, d: binH }  // 姿态 3 (调换H和L): 高度为 binL
+    ];
+
+    let bestResult = null;
+
+    function runNextOrientation(idx) {
+        if (idx >= orientations.length) {
+            finalizeResult(bestResult);
+            return;
+        }
+
+        const config = orientations[idx];
+
+        runSinglePacking(itemsToPack, config.w, config.h, config.d, checkStability, supportRatio, biggerFirst, (packed, unpacked) => {
+            // 将计算结果从当前的旋转坐标系转换映射回用户输入的原始坐标系 [binW, binH, binL]
+            const mappedPacked = packed.map(it_calc => {
+                const pos_orig = [];
+                const size_orig = [];
+                
+                // 坐标变换映射
+                pos_orig[config.perm[0]] = it_calc.x;
+                pos_orig[config.perm[1]] = it_calc.y;
+                pos_orig[config.perm[2]] = it_calc.z;
+
+                // 尺寸变换映射
+                size_orig[config.perm[0]] = it_calc.rw;
+                size_orig[config.perm[1]] = it_calc.rh;
+                size_orig[config.perm[2]] = it_calc.rd;
+
+                const mapped = new Item(
+                    it_calc.id,
+                    it_calc.name,
+                    it_calc.w, // 保持原始尺寸信息不变
+                    it_calc.h,
+                    it_calc.d,
+                    it_calc.color,
+                    it_calc.weight
+                );
+                mapped.x = pos_orig[0];
+                mapped.y = pos_orig[1];
+                mapped.z = pos_orig[2];
+                
+                mapped.rw = size_orig[0];
+                mapped.rh = size_orig[1];
+                mapped.rd = size_orig[2];
+                
+                // 动态获取转换尺寸后在原始坐标系下的旋转类型 (0-5)
+                mapped.rotationType = getRotationTypeFromDimensions(mapped, mapped.rw, mapped.rh, mapped.rd);
+                
+                return mapped;
+            });
+
+            // 映射未装载货物列表（仅用于清单展示，无坐标映射需求）
+            const mappedUnpacked = unpacked.map(it => {
+                return new Item(it.id, it.name, it.w, it.h, it.d, it.color, it.weight);
+            });
+
+            const currentScore = mappedPacked.length;
+            const currentVolumeUtil = calculateVolumeUtilization(mappedPacked, binW, binH, binL);
+
+            const result = {
+                packed: mappedPacked,
+                unpacked: mappedUnpacked,
+                score: currentScore,
+                utilization: currentVolumeUtil
+            };
+
+            // 如果当前姿态已经能够 100% 完美装入所有箱体，则提前终止后续计算
+            if (currentScore === itemsToPack.length) {
+                finalizeResult(result);
+                return;
+            }
+
+            // 对比并保存最优方案（优先比拼装载数量，其次比拼体积利用率）
+            if (!bestResult || currentScore > bestResult.score || (currentScore === bestResult.score && currentVolumeUtil > bestResult.utilization)) {
+                bestResult = result;
+            }
+
+            // 继续计算下一种姿态
+            runNextOrientation(idx + 1);
+        }, idx, orientations.length);
+    }
+
+    function finalizeResult(result) {
+        if (loadingModal) loadingModal.style.display = 'none';
+        callback(result.packed, result.unpacked);
+    }
+
+    runNextOrientation(0);
 }
 
 document.getElementById('run-pack-btn').addEventListener('click', () => {
