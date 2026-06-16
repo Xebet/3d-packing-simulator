@@ -2020,4 +2020,241 @@ window.onload = () => {
             window.open('https://github.com/Xebet/3d-packing-simulator', '_blank');
         });
     }
+
+    // J. 交互式功能导览 (Interactive Onboarding Tour)
+    const aboutTourBtn = document.getElementById('about-tour-btn');
+    const tourOverlay = document.getElementById('tour-overlay');
+    const tourHighlight = document.getElementById('tour-highlight');
+    const tourTooltip = document.getElementById('tour-tooltip');
+    const tourSkipBtn = document.getElementById('tour-skip-btn');
+    const tourBackBtn = document.getElementById('tour-back-btn');
+    const tourNextBtn = document.getElementById('tour-next-btn');
+
+    const tourSteps = [
+        {
+            element: null,
+            title: "欢迎来到 3D 智能装箱模拟器! 👋<br>Welcome to 3D Packing Simulator!",
+            desc: "这是一个离线、高性能的 3D 装箱配载和排布规划系统。接下来我们将带您快速了解各项核心功能。<hr>This is an offline, high-performance 3D packing simulation and layout system. Let's walk through the core features."
+        },
+        {
+            element: "#tour-container-config",
+            title: "1. 容器尺寸与配置 (Container Dimensions)",
+            desc: "在此配置货柜/箱子的长、宽、高尺寸，以及自重上限和泡货折重系数等属性。<hr>Set the length, width, height, maximum payload capacity, and volumetric billing divisor of your container here."
+        },
+        {
+            element: "#tour-modes",
+            title: "2. 工作模式切换 (Packing Modes)",
+            desc: "支持双模式：<br><b>自动模式</b>：运行并行算法，自动输出并播放最优化装箱策略；<br><b>手动模式</b>：在三维中以 3D 控制轴自由挪动、摆放和旋转货物。<hr>Select between: <br><b>Auto Mode</b>: Runs multi-core solver for optimal strategies;<br><b>Manual Mode</b>: Manually drag/rotate boxes with 3D translation gizmos."
+        },
+        {
+            element: "#tour-box-config",
+            title: "3. 产品货物配置 (Cargo Inventory)",
+            desc: "设置要装入的产品长宽高、颜色、重量、装载数量及各类朝向、重力支撑等限制参数。点击下方“添加/修改此配置”可增加入库。<hr>Configure cargo sizes, colors, weight, quantities, and placement constraints (e.g., orientation, bottom support). Click 'Add/Update Config' to save."
+        },
+        {
+            element: "#run-pack-btn",
+            title: "4. 开始智能计算 (Trigger Solver)",
+            desc: "配置好货物后，点击此按钮。系统会动态分配多核 Web Workers 全速并发计算最完美装箱解，主界面完全不卡顿。<hr>Click here to trigger multi-core background parallel computation for the optimal packing solution. The page remains fully responsive."
+        },
+        {
+            element: "#canvas-container",
+            title: "5. 3D 三维交互视口 (3D Viewport)",
+            desc: "三维可视化呈现。支持<b>左键拖拽旋转</b>、<b>右键拖拽平移</b>、<b>滚轮缩放</b>。顶部显示当前货物的实时装载体积占比与称重详情。<hr>Interactive 3D visualization. Use <b>Left click drag</b> to rotate, <b>Right click drag</b> to pan, and <b>Wheel</b> to zoom. Check metrics on the top overlay."
+        },
+        {
+            element: "#about-toggle",
+            title: "6. 关于与指南 (About & Guide)",
+            desc: "随时点击此按钮查看体积折重、重力稳定性等核心公式算法。您也可以在此处随时重新打开本使用指南！<hr>Click '关于 / About' to review volumetric weight formulas and gravity checks, or to restart this guide at any time!"
+        }
+    ];
+
+    let currentTourStep = 0;
+    let tourResizeHandler = null;
+
+    function startTour() {
+        currentTourStep = 0;
+        if (tourOverlay) tourOverlay.style.display = 'block';
+        document.body.style.overflow = 'hidden';
+        
+        // 关闭关于弹窗和其他可能弹出的提示
+        if (aboutModal) aboutModal.style.display = 'none';
+        const warningModal = document.getElementById('warning-modal');
+        if (warningModal) warningModal.style.display = 'none';
+
+        showTourStep(0);
+
+        // 绑定视口缩放与调整监听器，使高亮和提示框自适应
+        tourResizeHandler = () => {
+            const step = tourSteps[currentTourStep];
+            const targetEl = step.element ? document.querySelector(step.element) : null;
+            positionTooltip(targetEl, tourTooltip, tourHighlight);
+        };
+        window.addEventListener('resize', tourResizeHandler);
+    }
+
+    function showTourStep(index) {
+        currentTourStep = index;
+        const step = tourSteps[index];
+        const targetEl = step.element ? document.querySelector(step.element) : null;
+
+        const badge = document.getElementById('tour-step-badge');
+        const title = document.getElementById('tour-step-title');
+        const desc = document.getElementById('tour-step-desc');
+
+        if (badge) badge.textContent = `步骤 ${index + 1} / ${tourSteps.length} (Step ${index + 1} / ${tourSteps.length})`;
+        if (title) title.innerHTML = step.title;
+        if (desc) desc.innerHTML = step.desc;
+
+        if (tourBackBtn) {
+            if (index === 0) {
+                tourBackBtn.style.display = 'none';
+            } else {
+                tourBackBtn.style.display = 'block';
+            }
+        }
+
+        if (tourNextBtn) {
+            if (index === tourSteps.length - 1) {
+                tourNextBtn.textContent = '完成 / Finish';
+            } else {
+                tourNextBtn.textContent = '下一步 / Next';
+            }
+        }
+
+        if (tourTooltip) tourTooltip.classList.remove('active');
+
+        if (targetEl) {
+            // 将元素平滑滚动到屏幕中心，避免视口外高亮计算不准
+            targetEl.scrollIntoView({ block: 'center', inline: 'nearest' });
+            setTimeout(() => {
+                positionTooltip(targetEl, tourTooltip, tourHighlight);
+                if (tourTooltip) tourTooltip.classList.add('active');
+            }, 200);
+        } else {
+            positionTooltip(null, tourTooltip, tourHighlight);
+            if (tourTooltip) tourTooltip.classList.add('active');
+        }
+    }
+
+    function endTour(completed) {
+        if (tourOverlay) tourOverlay.style.display = 'none';
+        document.body.style.overflow = '';
+        if (tourResizeHandler) {
+            window.removeEventListener('resize', tourResizeHandler);
+            tourResizeHandler = null;
+        }
+        if (completed) {
+            localStorage.setItem('packing_simulator_tour_completed', 'true');
+        }
+    }
+
+    function positionTooltip(targetEl, tooltipEl, highlightEl) {
+        if (!tooltipEl || !highlightEl) return;
+
+        if (!targetEl) {
+            // 欢迎页的居中效果
+            tooltipEl.style.top = '50%';
+            tooltipEl.style.left = '50%';
+            tooltipEl.style.transform = 'translate(-50%, -50%)';
+            highlightEl.style.width = '0px';
+            highlightEl.style.height = '0px';
+            highlightEl.style.top = '50%';
+            highlightEl.style.left = '50%';
+            highlightEl.style.boxShadow = '0 0 0 9999px rgba(2, 6, 23, 0.75)';
+            return;
+        }
+
+        const rect = targetEl.getBoundingClientRect();
+        const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+        const scrollLeft = window.pageXOffset || document.documentElement.scrollLeft;
+
+        // 设置高亮框的宽度、高度、外间距
+        const padding = 6;
+        const top = rect.top + scrollTop - padding;
+        const left = rect.left + scrollLeft - padding;
+        const width = rect.width + padding * 2;
+        const height = rect.height + padding * 2;
+
+        highlightEl.style.top = `${top}px`;
+        highlightEl.style.left = `${left}px`;
+        highlightEl.style.width = `${width}px`;
+        highlightEl.style.height = `${height}px`;
+        highlightEl.style.boxShadow = '0 0 0 9999px rgba(2, 6, 23, 0.75), 0 0 15px var(--primary)';
+        
+        // 计算提示气泡的最佳摆放坐标
+        const tooltipWidth = 320;
+        const gap = 15;
+        let tTop, tLeft;
+        tooltipEl.style.transform = 'none';
+
+        // 基于屏幕可用空间进行动态微调
+        const spaceRight = window.innerWidth - rect.right;
+        const spaceLeft = rect.left;
+        const spaceBottom = window.innerHeight - rect.bottom;
+
+        if (spaceRight > tooltipWidth + gap) {
+            // 优先放在右侧
+            tLeft = rect.right + gap;
+            tTop = rect.top + scrollTop + (rect.height - tooltipEl.offsetHeight) / 2;
+        } else if (spaceLeft > tooltipWidth + gap) {
+            // 空间不足放左侧
+            tLeft = rect.left - tooltipWidth - gap;
+            tTop = rect.top + scrollTop + (rect.height - tooltipEl.offsetHeight) / 2;
+        } else if (spaceBottom > 220) {
+            // 上下布局：放下方
+            tLeft = rect.left + scrollLeft + (rect.width - tooltipWidth) / 2;
+            tTop = rect.bottom + gap + scrollTop;
+        } else {
+            // 放上方
+            tLeft = rect.left + scrollLeft + (rect.width - tooltipWidth) / 2;
+            tTop = rect.top - tooltipEl.offsetHeight - gap + scrollTop;
+        }
+
+        // 边界保护：确保不超出窗口边界
+        tLeft = Math.max(10, Math.min(tLeft, window.innerWidth - tooltipWidth - 10));
+        tTop = Math.max(10, tTop);
+
+        tooltipEl.style.top = `${tTop}px`;
+        tooltipEl.style.left = `${tLeft}px`;
+    }
+
+    // 绑定按钮事件
+    if (tourSkipBtn) {
+        tourSkipBtn.addEventListener('click', () => {
+            endTour(true);
+        });
+    }
+
+    if (tourBackBtn) {
+        tourBackBtn.addEventListener('click', () => {
+            if (currentTourStep > 0) {
+                showTourStep(currentTourStep - 1);
+            }
+        });
+    }
+
+    if (tourNextBtn) {
+        tourNextBtn.addEventListener('click', () => {
+            if (currentTourStep < tourSteps.length - 1) {
+                showTourStep(currentTourStep + 1);
+            } else {
+                endTour(true);
+            }
+        });
+    }
+
+    // 绑定关于弹窗中的重新运行指南按钮
+    if (aboutTourBtn) {
+        aboutTourBtn.addEventListener('click', () => {
+            startTour();
+        });
+    }
+
+    // 首次载入检测
+    const tourCompleted = localStorage.getItem('packing_simulator_tour_completed');
+    if (!tourCompleted) {
+        setTimeout(() => {
+            startTour();
+        }, 1200); // 1.2秒延迟，等待Three.js初始渲染就绪
+    }
 };
