@@ -28,6 +28,10 @@
             <span class="header-tag">Local Offline Version</span>
         </div>
         <div style="display: flex; align-items: center; gap: 1rem;">
+            <button id="about-toggle" class="btn btn-secondary" style="padding: 0.4rem 0.8rem; font-size: 0.75rem; border-color: var(--primary); color: var(--primary);">
+                <svg viewBox="0 0 24 24" style="width: 0.95rem; height: 0.95rem; stroke: currentColor; fill: none; stroke-width: 2; margin-right: 2px; vertical-align: middle;"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+                <span>关于 / About</span>
+            </button>
             <button id="theme-toggle" class="btn btn-secondary" style="padding: 0.4rem 0.8rem; font-size: 0.75rem; border-color: var(--primary); color: var(--primary);">
                 <svg viewBox="0 0 24 24" style="width: 0.95rem; height: 0.95rem; stroke: currentColor; fill: none; stroke-width: 2;"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
                 <span id="theme-text">日间模式</span>
@@ -463,6 +467,106 @@
             </p>
             <div style="background: rgba(128,128,128,0.15); border-radius: 999px; height: 6px; overflow: hidden; position: relative; width: 100%;">
                 <div id="loading-progress" style="background: var(--primary); height: 100%; width: 0%; transition: width 0.15s ease;"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 关于系统 Modal (Bilingual About Modal) -->
+    <div id="about-modal" class="modal-overlay" style="display: none; z-index: 1001;">
+        <div class="modal-content" style="max-width: 580px;">
+            <div class="modal-header">
+                <div class="modal-icon" style="background: rgba(99, 102, 241, 0.15); border: 1px solid rgba(99, 102, 241, 0.3); color: var(--primary);">
+                    <svg viewBox="0 0 24 24" style="width: 1.5rem; height: 1.5rem; stroke: currentColor; fill: none; stroke-width: 2;"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+                </div>
+                <h3 id="about-modal-title" style="font-size: 1.1rem; font-weight: 700; color: var(--text-primary);">关于系统 / About System</h3>
+            </div>
+            
+            <!-- 语言切换标签 -->
+            <div class="tab-container" style="margin-bottom: 0.2rem;">
+                <button id="about-tab-zh" class="tab active">
+                    简体中文
+                </button>
+                <button id="about-tab-en" class="tab">
+                    English
+                </button>
+            </div>
+            
+            <div class="modal-body" style="max-height: 380px; overflow-y: auto; padding-right: 0.25rem; gap: 0.75rem;">
+                <!-- 中文内容 -->
+                <div id="about-content-zh" style="display: flex; flex-direction: column; gap: 0.75rem;">
+                    <p style="font-weight: 600; color: var(--text-primary);">3D 智能装箱模拟器 & 交互式排布系统</p>
+                    <p>这是一个 100% 运行在客户端、支持离线的高性能 3D 装箱配载和排布规划系统，采用 Three.js 进行逼真的 3D 渲染，并借助多核 Web Workers 并发运行核心算法。</p>
+                    
+                    <div style="margin-top: 0.25rem;">
+                        <span style="font-weight: 600; color: var(--text-primary); display: block; margin-bottom: 0.25rem;">⚡ 核心功能：</span>
+                        <ul style="padding-left: 1.25rem; display: flex; flex-direction: column; gap: 0.25rem; list-style-type: disc;">
+                            <li><strong>多核并行装箱引擎</strong>：在后台拉起与您的 CPU 逻辑核心数匹配的 Web Workers（最高 8 线程）并发寻优，页面完全不卡顿。</li>
+                            <li><strong>混合启发式与回溯算法</strong>：基于 DFS（深度优先回溯）的 2D 划分算法与基于接触面积最大化、高度-深度评分的 3D 贪婪摆放算法相结合，并支持重力稳定性校验（底部接触面积须 &ge; 50%）。</li>
+                            <li><strong>容器姿态自动优化</strong>：计算时自动尝试不同的容器倾斜/旋转朝向（如长宽高调换），找到能装入最多货物的最优摆放姿态，并在最终 3D 渲染时自动映射回您输入的原始长宽高，确保物理表现的一致性。</li>
+                            <li><strong>双模式三维工作区</strong>：
+                                <ul style="padding-left: 1rem; list-style-type: circle; margin-top: 0.1rem;">
+                                    <li><em>自动模式</em>：提供带时间轴进度条的分步动画回放，清晰查看装箱顺序。</li>
+                                    <li><em>手动模式</em>：使用 3D Gizmo 控制器自由拖拽、旋转货物，具备 1cm 网格吸附、重力下落辅助、实时碰撞与溢出检测。</li>
+                                </ul>
+                            </li>
+                            <li><strong>现代视觉与无障碍</strong>：完美支持日间/夜间双主题，高对比度设计，界面顺滑且符合 Web WCAG 视觉标准。</li>
+                        </ul>
+                    </div>
+                    
+                    <div style="margin-top: 0.25rem; background: var(--modal-list-bg); border: 1px solid var(--panel-border); border-radius: 8px; padding: 0.75rem; font-size: 0.8rem; line-height: 1.4;">
+                        <span style="font-weight: 600; color: var(--text-primary); display: block; margin-bottom: 0.2rem;">📐 核心计算公式：</span>
+                        <div style="margin-bottom: 0.4rem;">
+                            <strong>计费体积重量 (Dimensional Weight)：</strong><br>
+                            计费体积重量 (kg) = (长(cm) × 宽(cm) × 高(cm)) / 泡货系数
+                        </div>
+                        <div>
+                            <strong>重力稳定性支撑率 (Support Ratio)：</strong><br>
+                            支撑率 = (与下方物品重叠面积和) / 物品底面积 &ge; 50%
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 英文内容 -->
+                <div id="about-content-en" style="display: none; flex-direction: column; gap: 0.75rem;">
+                    <p style="font-weight: 600; color: var(--text-primary);">3D Packing Simulator & Interactive Layout System</p>
+                    <p>A high-performance, client-side 3D bin packing visualization system built using Three.js and parallel multi-core Web Workers. It runs 100% offline in your browser without any backend dependencies.</p>
+                    
+                    <div style="margin-top: 0.25rem;">
+                        <span style="font-weight: 600; color: var(--text-primary); display: block; margin-bottom: 0.25rem;">⚡ Key Features:</span>
+                        <ul style="padding-left: 1.25rem; display: flex; flex-direction: column; gap: 0.25rem; list-style-type: disc;">
+                            <li><strong>Multi-Core Parallel Packer</strong>: Spawns background Web Workers mapped to your hardware threads (up to 8) to calculate packing solutions concurrently without UI freezes.</li>
+                            <li><strong>Hybrid Backtracking & Heuristics</strong>: Utilizes a DFS-based 2D layer backtracking solver paired with 3D multi-start greedy scoring. Validates physical placement with real-time bottom support ratio checking (&ge; 50%).</li>
+                            <li><strong>Orientation Auto-Optimization</strong>: Dynamically tests alternative container aspect ratio rotations during computation under gravity limits, matching the best orientation, and transparently maps results back to your inputs for display.</li>
+                            <li><strong>Dual-Mode 3D Workspace</strong>:
+                                <ul style="padding-left: 1rem; list-style-type: circle; margin-top: 0.1rem;">
+                                    <li><em>Auto Mode</em>: Renders the optimal layout automatically and provides a step-by-step playback controller (Timeline Slider).</li>
+                                    <li><em>Manual Mode</em>: Drag, drop and rotate items manually using 3D Transform Gizmos with 1cm snapping, gravity drop, and live collision/overflow checking.</li>
+                                </ul>
+                            </li>
+                            <li><strong>Premium Aesthetics & Contrast</strong>: Fully responsive glassmorphism interface with high contrast Day/Night theme toggles conforming to accessibility principles.</li>
+                        </ul>
+                    </div>
+                    
+                    <div style="margin-top: 0.25rem; background: var(--modal-list-bg); border: 1px solid var(--panel-border); border-radius: 8px; padding: 0.75rem; font-size: 0.8rem; line-height: 1.4;">
+                        <span style="font-weight: 600; color: var(--text-primary); display: block; margin-bottom: 0.2rem;">📐 Core Formulas:</span>
+                        <div style="margin-bottom: 0.4rem;">
+                            <strong>Dimensional Weight:</strong><br>
+                            Dimensional Weight (kg) = (L(cm) × W(cm) × H(cm)) / Volumetric Divisor
+                        </div>
+                        <div>
+                            <strong>Gravity Support Validation:</strong><br>
+                            Support Ratio = (Overlap Area with bottom items) / Base Area of Item &ge; 50%
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="modal-footer" style="gap: 0.75rem;">
+                <button class="btn btn-secondary" id="about-github-btn" style="min-width: 80px; display: flex; align-items: center; gap: 0.25rem; font-size: 0.8rem; padding: 0.5rem 0.75rem;">
+                    <svg viewBox="0 0 24 24" style="width: 0.9rem; height: 0.9rem; fill: currentColor;"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+                    GitHub
+                </button>
+                <button class="btn btn-primary" id="about-close-btn" style="min-width: 80px; font-size: 0.8rem; padding: 0.5rem 0.75rem;">关闭 / Close</button>
             </div>
         </div>
     </div>

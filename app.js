@@ -1969,4 +1969,55 @@ window.onload = () => {
             );
         }
     });
+
+    // I. 关于系统弹窗交互 (Bilingual About Modal Interaction)
+    const aboutToggle = document.getElementById('about-toggle');
+    const aboutModal = document.getElementById('about-modal');
+    const aboutCloseBtn = document.getElementById('about-close-btn');
+    const aboutGithubBtn = document.getElementById('about-github-btn');
+    const aboutTabZh = document.getElementById('about-tab-zh');
+    const aboutTabEn = document.getElementById('about-tab-en');
+    const aboutContentZh = document.getElementById('about-content-zh');
+    const aboutContentEn = document.getElementById('about-content-en');
+
+    if (aboutToggle && aboutModal) {
+        aboutToggle.addEventListener('click', () => {
+            aboutModal.style.display = 'flex';
+        });
+    }
+
+    if (aboutCloseBtn && aboutModal) {
+        aboutCloseBtn.addEventListener('click', () => {
+            aboutModal.style.display = 'none';
+        });
+    }
+
+    if (aboutModal) {
+        aboutModal.addEventListener('click', (e) => {
+            if (e.target === aboutModal) {
+                aboutModal.style.display = 'none';
+            }
+        });
+    }
+
+    if (aboutTabZh && aboutTabEn && aboutContentZh && aboutContentEn) {
+        aboutTabZh.addEventListener('click', () => {
+            aboutTabZh.classList.add('active');
+            aboutTabEn.classList.remove('active');
+            aboutContentZh.style.display = 'flex';
+            aboutContentEn.style.display = 'none';
+        });
+        aboutTabEn.addEventListener('click', () => {
+            aboutTabEn.classList.add('active');
+            aboutTabZh.classList.remove('active');
+            aboutContentEn.style.display = 'flex';
+            aboutContentZh.style.display = 'none';
+        });
+    }
+
+    if (aboutGithubBtn) {
+        aboutGithubBtn.addEventListener('click', () => {
+            window.open('https://github.com/Xebet/3d-packing-simulator', '_blank');
+        });
+    }
 };
