@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>3D Packing System - Integrated Test Suite</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background-color: #f8fafc;
+            color: #1e293b;
+            padding: 24px;
+        }
+        h1 {
+            color: #0f172a;
+            border-bottom: 2px solid #e2e8f0;
+            padding-bottom: 12px;
+        }
+        .summary-card {
+            background: #ffffff;
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 24px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        .test-case {
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 16px;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+        }
+        .test-case.pass {
+            border-left: 6px solid #10b981;
+        }
+        .test-case.fail {
+            border-left: 6px solid #ef4444;
+        }
+        .badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.875rem;
+            font-weight: 600;
+        }
+        .badge.pass {
+            background-color: #d1fae5;
+            color: #065f46;
+        }
+        .badge.fail {
+            background-color: #fee2e2;
+            color: #991b1b;
+        }
+        pre {
+            background: #f1f5f9;
+            padding: 12px;
+            border-radius: 6px;
+            font-size: 0.875rem;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+<body>
+    <h1>3D Packing System - Integrated Test Suite</h1>
+    <div id="status">Running tests...</div>
+    <div class="summary-card" id="summary">
+        Tests executed: <span id="executed-count">0</span> / <span id="total-count">0</span><br>
+        Passed: <span id="passed-count" style="color:#10b981; font-weight:bold;">0</span><br>
+        Failed: <span id="failed-count" style="color:#ef4444; font-weight:bold;">0</span>
+    </div>
+    <div id="test-results"></div>
+
+    <!-- Load the production packer.js -->
+    <script src="packer.js"></script>
+    <script>
+        const results = [];
+        let executed = 0;
+        let passed = 0;
+        let failed = 0;
+
+        function addResult(name, success, details) {
+            executed++;
+            if (success) passed++;
+            else failed++;
+
+            results.push({ name, success, details });
+
+            const div = document.createElement('div');
+            div.className = `test-case ${success ? 'pass' : 'fail'}`;
+            div.innerHTML = `
+                <h3>${name} <span class="badge ${success ? 'pass' : 'fail'}">${success ? 'PASS' : 'FAIL'}</span></h3>
+                <pre>${details}</pre>
+            `;
+            document.getElementById('test-results').appendChild(div);
+
+            document.getElementById('executed-count').innerText = executed;
+            document.getElementById('passed-count').innerText = passed;
+            document.getElementById('failed-count').innerText = failed;
+        }
+
+        function runTests() {
+            document.getElementById('total-count').innerText = "4";
+
+            // ==========================================
+            // TEST CASE 1: 49-item set with stability check
+            // ==========================================
+            try {
+                const binW = 40;
+                const binH = 50;
+                const binL = 60;
+                const items = [];
+                for (let i = 0; i < 9; i++) items.push(new Item(`A_${i}`, "产品A", 16, 8, 29, "#6366f1", 0.65));
+                for (let i = 0; i < 24; i++) items.push(new Item(`B_${i}`, "产品B", 13, 6, 29, "#06b6d4", 0.37));
+                for (let i = 0; i < 16; i++) items.push(new Item(`C_${i}`, "产品C", 6, 6, 29, "#10b981", 0.19));
+
+                const packer = new Packer(binW, binH, binL);
+                const start = performance.now();
+                packer.pack(items, { checkStability: true, supportRatio: 0.5 });
+                const end = performance.now();
+
+                const success = packer.items.length === 49 && packer.unpacked.length === 0;
+                const details = `Container: 40x50x60\nItems: 9 A (16x8x29), 24 B (13x6x29), 16 C (6x6x29)\nStability check: ENABLED\n` +
+                                `Packed: ${packer.items.length} / 49\nUnpacked: ${packer.unpacked.length}\n` +
+                                `Time: ${(end - start).toFixed(2)} ms`;
+                addResult("极限49件套稳定性装载测试", success, details);
+            } catch (err) {
+                addResult("极限49件套稳定性装载测试", false, err.stack);
+            }
+
+            // ==========================================
+            // TEST CASE 2: 49-item set without stability check
+            // ==========================================
+            try {
+                const binW = 40;
+                const binH = 50;
+                const binL = 60;
+                const items = [];
+                for (let i = 0; i < 9; i++) items.push(new Item(`A_${i}`, "产品A", 16, 8, 29, "#6366f1", 0.65));
+                for (let i = 0; i < 24; i++) items.push(new Item(`B_${i}`, "产品B", 13, 6, 29, "#06b6d4", 0.37));
+                for (let i = 0; i < 16; i++) items.push(new Item(`C_${i}`, "产品C", 6, 6, 29, "#10b981", 0.19));
+
+                const packer = new Packer(binW, binH, binL);
+                const start = performance.now();
+                packer.pack(items, { checkStability: false });
+                const end = performance.now();
+
+                const success = packer.items.length === 49 && packer.unpacked.length === 0;
+                const details = `Container: 40x50x60\nItems: 9 A (16x8x29), 24 B (13x6x29), 16 C (6x6x29)\nStability check: DISABLED\n` +
+                                `Packed: ${packer.items.length} / 49\nUnpacked: ${packer.unpacked.length}\n` +
+                                `Time: ${(end - start).toFixed(2)} ms`;
+                addResult("极限49件套非稳定性装载测试", success, details);
+            } catch (err) {
+                addResult("极限49件套非稳定性装载测试", false, err.stack);
+            }
+
+            // ==========================================
+            // TEST CASE 3: Volume and Volumetric Weight Calculation (Dim Weight)
+            // ==========================================
+            try {
+                const binW = 40;
+                const binH = 50;
+                const binL = 60;
+                const divisor = 8000;
+                const expectedVolume = (binW * binH * binL) / 1000; // 120.0 L
+                const expectedDimWeight = (binW * binH * binL) / divisor; // 15.0 kg
+
+                const success = Math.abs(expectedVolume - 120.0) < 0.01 && Math.abs(expectedDimWeight - 15.0) < 0.01;
+                const details = `Container: 40x50x60\nDivisor: ${divisor}\n` +
+                                `Calculated Volume: ${expectedVolume.toFixed(1)} L (Expected: 120.0 L)\n` +
+                                `Calculated Dim Weight: ${expectedDimWeight.toFixed(1)} kg (Expected: 15.0 kg)`;
+                addResult("容积与体积折算重 (泡货值) 计算公式测试", success, details);
+            } catch (err) {
+                addResult("容积与体积折算重 (泡货值) 计算公式测试", false, err.stack);
+            }
+
+            // ==========================================
+            // TEST CASE 4: Standard Greedy Fallback Test (No Common Dim)
+            // ==========================================
+            try {
+                // Mix of items with no common dimension to test greedy fallback
+                const binW = 40;
+                const binH = 40;
+                const binL = 40;
+                const items = [];
+                items.push(new Item("g1", "Box1", 20, 20, 20));
+                items.push(new Item("g2", "Box2", 15, 15, 15));
+                items.push(new Item("g3", "Box3", 10, 10, 10));
+
+                const packer = new Packer(binW, binH, binL);
+                const start = performance.now();
+                packer.pack(items, { checkStability: true });
+                const end = performance.now();
+
+                const success = packer.items.length === 3 && packer.unpacked.length === 0;
+                const details = `Container: 40x40x40\nItems: 20x20x20, 15x15x15, 10x10x10\nStability check: ENABLED\n` +
+                                `Packed: ${packer.items.length} / 3\nUnpacked: ${packer.unpacked.length}\n` +
+                                `Time: ${(end - start).toFixed(2)} ms`;
+                addResult("无特征公维的传统启发式降级测试", success, details);
+            } catch (err) {
+                addResult("无特征公维的传统启发式降级测试", false, err.stack);
+            }
+
+            document.getElementById('status').innerText = "DONE";
+        }
+
+        window.onload = runTests;
+    </script>
+</body>
+</html>

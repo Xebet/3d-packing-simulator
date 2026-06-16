@@ -1,0 +1,1846 @@
+// ==========================================
+// 1. 全局状态与配置
+// ==========================================
+let scene, camera, renderer, orbitControls, transformControls;
+let containerMesh, containerEdges;
+let shadowPlane; // 接收阴影的底板
+let gridHelper, axesHelper;
+
+// 货物数据结构
+// 预设产品清单 (v2.0 优化修改)
+let inventory = [
+    { id: 'preset_1', name: '产品A', l: 29, w: 16, h: 8, qty: 9, color: '#6366f1', weight: 0.65, ratio: 0, minQty: 0 },
+    { id: 'preset_2', name: '产品B', l: 29, w: 13, h: 6, qty: 24, color: '#06b6d4', weight: 0.37, ratio: 0, minQty: 0 },
+    { id: 'preset_3', name: '产品C', l: 29, w: 6, h: 6, qty: 12, color: '#10b981', weight: 0.19, ratio: 0, minQty: 0 }
+];
+
+let placedItems = []; // 当前放入容器的盒子列表 (手动模式)
+let selectedPlacedItem = null; // 当前手动选中的盒子
+let selectedBoxMesh = null; // 对应的 Three.js 网格物体
+let selectionBoxHelper = null; // 选中框高亮辅助线
+
+let activeMode = 'auto'; // 'auto' | 'manual'
+
+// 自动装箱计算结果与动画
+let autoPackedItems = [];
+let autoUnpackedItems = [];
+let animationStep = 0;
+let animationInterval = null;
+let isAnimationPlaying = false;
+
+// 缓存所有渲染的物品 Mesh，键为 item.id
+let renderedItemMeshes = new Map();
+
+// ==========================================
+// 2. 初始化 Three.js 场景
+// ==========================================
+function init3DScene() {
+    const container = document.getElementById('canvas-container');
+    const width = container.clientWidth;
+    const height = container.clientHeight;
+
+    // A. 场景
+    scene = new THREE.Scene();
+    const isLight = document.body.classList.contains('light-theme');
+    scene.background = new THREE.Color(isLight ? '#f1f5f9' : '#070b13'); // 深黑色科技背景 或 浅灰白背景
+
+    // B. 相机
+    camera = new THREE.PerspectiveCamera(45, width / height, 1, 1000);
+    camera.position.set(70, 70, 100);
+
+    // C. 渲染器
+    renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(width, height);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    container.appendChild(renderer.domElement);
+
+    // D. 控制器 (使用全局 THREE 命名空间下挂载的辅助器)
+    orbitControls = new THREE.OrbitControls(camera, renderer.domElement);
+    orbitControls.enableDamping = true;
+    orbitControls.dampingFactor = 0.05;
+    orbitControls.maxPolarAngle = Math.PI / 2 - 0.05; // 限制相机不能穿入地下
+    orbitControls.minDistance = 20;
+    orbitControls.maxDistance = 300;
+
+    // E. 拖拽变换器 (TransformControls)
+    transformControls = new THREE.TransformControls(camera, renderer.domElement);
+    transformControls.size = 0.85; // 缩小 gizmo
+    transformControls.addEventListener('change', () => renderer.render(scene, camera));
+    transformControls.addEventListener('dragging-changed', (event) => {
+        orbitControls.enabled = !event.value; // 拖动时禁用轨道控制器，防止镜头跟着晃动
+    });
+    // 监听拖动事件，触发实时坐标边界和碰撞限制
+    transformControls.addEventListener('objectChange', onGizmoDrag);
+    scene.add(transformControls);
+
+    // F. 灯光系统
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+    scene.add(ambientLight);
+
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.7);
+    dirLight.position.set(80, 120, 60);
+    dirLight.castShadow = true;
+    dirLight.shadow.mapSize.width = 2048;
+    dirLight.shadow.mapSize.height = 2048;
+    dirLight.shadow.camera.near = 0.5;
+    dirLight.shadow.camera.far = 300;
+    const d = 100;
+    dirLight.shadow.camera.left = -d;
+    dirLight.shadow.camera.right = d;
+    dirLight.shadow.camera.top = d;
+    dirLight.shadow.camera.bottom = -d;
+    dirLight.shadow.bias = -0.0005;
+    scene.add(dirLight);
+
+    const pointLight = new THREE.PointLight(0x6366f1, 0.5, 200);
+    pointLight.position.set(-60, 50, -60);
+    scene.add(pointLight);
+
+    // G. 辅助网格和坐标轴
+    if (isLight) {
+        gridHelper = new THREE.GridHelper(200, 50, 0x4f46e5, 0xcbd5e1);
+    } else {
+        gridHelper = new THREE.GridHelper(200, 50, 0x3b82f6, 0x1e293b);
+    }
+    gridHelper.position.y = -20;
+    scene.add(gridHelper);
+
+    axesHelper = new THREE.AxesHelper(30);
+    axesHelper.position.set(-100, -19.9, -100);
+    scene.add(axesHelper);
+
+    // H. 创建阴影底板
+    const shadowPlaneGeo = new THREE.PlaneGeometry(500, 500);
+    const shadowPlaneMat = new THREE.ShadowMaterial({ opacity: 0.15 });
+    shadowPlane = new THREE.Mesh(shadowPlaneGeo, shadowPlaneMat);
+    shadowPlane.rotation.x = -Math.PI / 2;
+    shadowPlane.position.y = -20;
+    shadowPlane.receiveShadow = true;
+    scene.add(shadowPlane);
+
+    // I. 窗口尺寸调整
+    window.addEventListener('resize', onWindowResize);
+
+    // J. 点击场景空白处或双击选择物体
+    const raycaster = new THREE.Raycaster();
+    const mouse = new THREE.Vector2();
+
+    renderer.domElement.addEventListener('dblclick', (e) => {
+        if (activeMode !== 'manual') return; // 只有手动摆放模式才支持 3D 点击选择
+
+        const rect = renderer.domElement.getBoundingClientRect();
+        mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+        mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+
+        raycaster.setFromCamera(mouse, camera);
+        
+        // 查找所有被渲染的货物物体
+        const meshesToIntersect = Array.from(renderedItemMeshes.values());
+        const intersects = raycaster.intersectObjects(meshesToIntersect, true);
+
+        if (intersects.length > 0) {
+            // 获取最接近的网格物体
+            let clickedMesh = intersects[0].object;
+            // 如果点击的是黑色线框，寻找父级网格
+            if (clickedMesh.type === 'LineSegments' && clickedMesh.parent) {
+                clickedMesh = clickedMesh.parent;
+            }
+            
+            // 查找对应的货物 ID
+            for (const [id, mesh] of renderedItemMeshes.entries()) {
+                if (mesh === clickedMesh) {
+                    selectPlacedItemById(id);
+                    break;
+                }
+            }
+        } else {
+            // 双击空白处取消选中
+            selectPlacedItemById(null);
+        }
+    });
+
+    // 启动渲染循环
+    animateLoop();
+}
+
+function animateLoop() {
+    requestAnimationFrame(animateLoop);
+    orbitControls.update();
+    renderer.render(scene, camera);
+}
+
+function onWindowResize() {
+    const container = document.getElementById('canvas-container');
+    const width = container.clientWidth;
+    const height = container.clientHeight;
+    camera.aspect = width / height;
+    camera.updateProjectionMatrix();
+    renderer.setSize(width, height);
+}
+
+// ==========================================
+// 3. 动态更新/创建容器 (Bin) 3D 模型
+// ==========================================
+function updateContainer3D() {
+    const l = parseFloat(document.getElementById('bin-l').value) || 60;
+    const w = parseFloat(document.getElementById('bin-w').value) || 40;
+    const h = parseFloat(document.getElementById('bin-h').value) || 50;
+
+    // 清理旧容器
+    if (containerMesh) scene.remove(containerMesh);
+    if (containerEdges) scene.remove(containerEdges);
+
+    const isLight = document.body.classList.contains('light-theme');
+    const isWireframeActive = document.getElementById('view-toggle-wireframe').classList.contains('active');
+    const opacityValue = isWireframeActive ? 0.0 : (parseFloat(document.getElementById('view-opacity').value) / 100 || 0.25);
+
+    // 1. 创建半透明外壳容器
+    const geometry = new THREE.BoxGeometry(w, h, l);
+    // 这里将容器中心放在 (0, h/2 - 20, 0)
+    // 使得容器的底部正好在 y = -20 的高度，与辅助网格平行
+    const material = new THREE.MeshStandardMaterial({
+        color: isLight ? 0xffffff : 0x1e293b,
+        transparent: true,
+        opacity: opacityValue,
+        roughness: 0.1,
+        metalness: 0.1,
+        side: THREE.BackSide, // 从外部看到里面
+        depthWrite: false
+    });
+    
+    containerMesh = new THREE.Mesh(geometry, material);
+    containerMesh.position.set(0, h / 2 - 20, 0);
+    scene.add(containerMesh);
+
+    // 2. 创建精细的外缘线框
+    const edgesGeo = new THREE.EdgesGeometry(geometry);
+    const edgesMat = new THREE.LineBasicMaterial({ color: isLight ? 0x4f46e5 : 0x6366f1, linewidth: 2 });
+    containerEdges = new THREE.LineSegments(edgesGeo, edgesMat);
+    containerEdges.position.copy(containerMesh.position);
+    scene.add(containerEdges);
+
+    // 3. 动态移动地面网格与阴影板，使其正好处于容器底部
+    gridHelper.position.y = -20;
+    shadowPlane.position.y = -20.05;
+
+    // 4. 重置摄像机焦距在容器的中心位置
+    orbitControls.target.set(0, h / 2 - 20, 0);
+
+    // 如果处于手动模式，重置滑块的最大值
+    updateManualSliderBounds();
+    
+    // 更新数据统计里容器的总容积
+    updateStats();
+}
+
+// ==========================================
+// 4. 产品清单数据绑定与 UI 操作
+// ==========================================
+function renderInventoryUI() {
+    const listDiv = document.getElementById('inventory-items');
+    listDiv.innerHTML = '';
+
+    inventory.forEach((item, index) => {
+        const div = document.createElement('div');
+        div.className = 'inventory-item';
+        div.innerHTML = `
+            <div class="item-meta" style="flex: 1; min-width: 0;">
+                <div class="item-color-indicator" style="background-color: ${item.color};"></div>
+                <div class="item-details" style="min-width: 0; flex: 1;">
+                    <span class="item-name" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block;" title="${item.name}">${item.name}</span>
+                    <span class="item-dims" style="font-size: 0.7rem; display: block;">${item.l}x${item.w}x${item.h}cm | ${item.weight}kg | 配比:${item.ratio} | 最少:${item.minQty}</span>
+                </div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 0.4rem; flex-shrink: 0;">
+                <div class="item-qty-selector">
+                    <button class="qty-btn dec-btn" data-index="${index}">-</button>
+                    <input type="number" class="qty-input" data-index="${index}" value="${item.qty}" min="1">
+                    <button class="qty-btn inc-btn" data-index="${index}">+</button>
+                </div>
+                ${activeMode === 'manual' ? `
+                    <button class="btn btn-secondary place-one-btn" data-index="${index}" style="padding: 0.25rem 0.5rem; font-size: 0.7rem; height: 26px;">
+                        放入1件
+                    </button>
+                ` : ''}
+                <button class="delete-item-btn" data-index="${index}">
+                    <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                </button>
+            </div>
+        `;
+        listDiv.appendChild(div);
+    });
+
+    // 绑定数量减少按钮事件
+    document.querySelectorAll('.dec-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const idx = parseInt(e.target.getAttribute('data-index'));
+            if (inventory[idx].qty > 1) {
+                inventory[idx].qty--;
+                renderInventoryUI();
+                updateStats();
+            }
+        });
+    });
+
+    // 绑定数量增加按钮事件
+    document.querySelectorAll('.inc-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const idx = parseInt(e.target.getAttribute('data-index'));
+            inventory[idx].qty++;
+            renderInventoryUI();
+            updateStats();
+        });
+    });
+
+    // 绑定数量直接输入框变更事件
+    document.querySelectorAll('.qty-input').forEach(input => {
+        input.addEventListener('change', (e) => {
+            const idx = parseInt(e.target.getAttribute('data-index'));
+            let val = parseInt(e.target.value);
+            if (isNaN(val) || val < 1) {
+                val = 1;
+            }
+            inventory[idx].qty = val;
+            renderInventoryUI();
+            updateStats();
+        });
+    });
+
+    // 绑定放入事件 (手动模式)
+    document.querySelectorAll('.place-one-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const idx = parseInt(e.target.getAttribute('data-index'));
+            manuallyPlaceItem(inventory[idx]);
+        });
+    });
+
+    // 绑定删除清单项目事件
+    document.querySelectorAll('.delete-item-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            let button = e.target;
+            while (button.tagName !== 'BUTTON') {
+                button = button.parentElement;
+            }
+            const idx = parseInt(button.getAttribute('data-index'));
+            inventory.splice(idx, 1);
+            renderInventoryUI();
+            updateStats();
+        });
+    });
+}
+
+// 添加新产品到库存清单
+document.getElementById('add-item-btn').addEventListener('click', () => {
+    const name = document.getElementById('item-name').value.trim() || '盒子';
+    const l = parseFloat(document.getElementById('item-l').value) || 10;
+    const w = parseFloat(document.getElementById('item-w').value) || 10;
+    const h = parseFloat(document.getElementById('item-h').value) || 10;
+    const qty = parseInt(document.getElementById('item-qty').value) || 1;
+    const color = document.getElementById('item-color').value;
+    const weight = parseFloat(document.getElementById('item-weight').value) || 0.0;
+    const ratio = parseInt(document.getElementById('item-ratio').value) || 0;
+    const minQty = parseInt(document.getElementById('item-min-qty').value) || 0;
+
+    const id = 'item_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
+    inventory.push({ id, name, l, w, h, qty, color, weight, ratio, minQty });
+    renderInventoryUI();
+    updateStats();
+
+    // 重置占比系数和最少数量输入框为 0，并恢复可用状态 (v2.0 优化)
+    const ratioInput = document.getElementById('item-ratio');
+    const minQtyInput = document.getElementById('item-min-qty');
+    ratioInput.value = "0";
+    minQtyInput.value = "0";
+    ratioInput.disabled = false;
+    minQtyInput.disabled = false;
+});
+
+// ==========================================
+// 5. 三维渲染盒子物体 (Mesh Helper)
+// ==========================================
+function createBoxMesh(item) {
+    // 创建立方体网格物体的辅助函数
+    // item.rw, item.rh, item.rd 已经在装箱时确定（由于旋转）
+    const geometry = new THREE.BoxGeometry(item.rw, item.rh, item.rd);
+    const material = new THREE.MeshStandardMaterial({
+        color: new THREE.Color(item.color),
+        roughness: 0.4,
+        metalness: 0.1
+    });
+
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+
+    // 增加一个帅气清晰的黑细边缘线，使得各个盒子立体区分度更高
+    const edgesGeo = new THREE.EdgesGeometry(geometry);
+    const edgesMat = new THREE.LineBasicMaterial({ color: 0x000000, linewidth: 1.5 });
+    const line = new THREE.LineSegments(edgesGeo, edgesMat);
+    mesh.add(line);
+
+    // 将 Three.js 的位置与容器逻辑坐标对齐。
+    updateMeshPosition(mesh, item);
+
+    return mesh;
+}
+
+function updateMeshPosition(mesh, item) {
+    const binL = parseFloat(document.getElementById('bin-l').value);
+    const binW = parseFloat(document.getElementById('bin-w').value);
+    const binH = parseFloat(document.getElementById('bin-h').value);
+
+    // 从容器相对左下后角原点 (x,y,z) 映射到 3D 空间的世界坐标
+    // containerMesh 底面 y = -20，左面 x = -binW/2，后面 z = -binL/2
+    const x3d = item.x + item.rw / 2 - binW / 2;
+    const y3d = item.y + item.rh / 2 - 20;
+    const z3d = item.z + item.rd / 2 - binL / 2;
+
+    mesh.position.set(x3d, y3d, z3d);
+}
+
+// 清除当前场景渲染的所有货物
+function clearRenderedBoxes() {
+    renderedItemMeshes.forEach(mesh => scene.remove(mesh));
+    renderedItemMeshes.clear();
+    if (transformControls) transformControls.detach();
+    removeSelectionHelper();
+}
+
+// ==========================================
+// 6. 自动装箱模式核心控制逻辑
+// ==========================================
+// Web Worker 动态生成器，绕过本地 file:// CORS 限制
+function createPackingWorker() {
+    const blobContent = `
+        const boxesOverlap = ${boxesOverlap.toString()};
+        const Item = ${Item.toString()};
+        const Packer = ${Packer.toString()};
+
+        self.onmessage = function(e) {
+            try {
+                const { type, itemsData, binW, binH, binD, options, partitionsRange, startTrial, numTrials } = e.data;
+                
+                const itemsToPack = itemsData.map(it => {
+                    const item = new Item(it.id, it.name, it.w, it.h, it.d, it.color, it.weight);
+                    return item;
+                });
+                
+                const packer = new Packer(binW, binH, binD);
+                
+                if (type === 'tryLayerPack') {
+                    const result = packer.tryLayerBacktrackingPackWithPartitions(itemsToPack, options.checkStability, options.supportRatio, partitionsRange[0], partitionsRange[1]);
+                    if (result) {
+                        const resultData = result.map(it => ({
+                            id: it.id,
+                            name: it.name,
+                            w: it.w,
+                            h: it.h,
+                            d: it.d,
+                            color: it.color,
+                            weight: it.weight,
+                            x: it.x,
+                            y: it.y,
+                            z: it.z,
+                            rw: it.rw,
+                            rh: it.rh,
+                            rd: it.rd,
+                            rotationType: it.rotationType
+                        }));
+                        self.postMessage({ status: 'success', items: resultData });
+                    } else {
+                        self.postMessage({ status: 'fail' });
+                    }
+                } else if (type === 'greedyPack') {
+                    const result = packer.runGreedyPackTrials(itemsToPack, options, startTrial, numTrials);
+                    const resultData = {
+                        items: result.items.map(it => ({
+                            id: it.id,
+                            name: it.name,
+                            w: it.w,
+                            h: it.h,
+                            d: it.d,
+                            color: it.color,
+                            weight: it.weight,
+                            x: it.x,
+                            y: it.y,
+                            z: it.z,
+                            rw: it.rw,
+                            rh: it.rh,
+                            rd: it.rd,
+                            rotationType: it.rotationType
+                        })),
+                        unpacked: result.unpacked.map(it => ({
+                            id: it.id,
+                            name: it.name,
+                            w: it.w,
+                            h: it.h,
+                            d: it.d,
+                            color: it.color,
+                            weight: it.weight
+                        })),
+                        score: result.score
+                    };
+                    self.postMessage({ status: 'success', result: resultData });
+                }
+            } catch (err) {
+                self.postMessage({ status: 'error', error: err.message });
+            }
+        };
+    `;
+
+    const blob = new Blob([blobContent], { type: 'application/javascript' });
+    const blobURL = URL.createObjectURL(blob);
+    return new Worker(blobURL);
+}
+
+// 多核并发异步装箱调度器
+function performParallelPacking(itemsToPack, binW, binH, binL, checkStability, supportRatio, biggerFirst, callback) {
+    const loadingModal = document.getElementById('loading-modal');
+    const progressBar = document.getElementById('loading-progress');
+    
+    if (loadingModal) loadingModal.style.display = 'flex';
+    if (progressBar) progressBar.style.width = '0%';
+
+    // 降级保护：如果浏览器不支持 Web Worker
+    if (typeof Worker === 'undefined') {
+        setTimeout(() => {
+            const packer = new Packer(binW, binH, binL);
+            packer.pack(itemsToPack, { checkStability, supportRatio, biggerFirst });
+            if (loadingModal) loadingModal.style.display = 'none';
+            callback(packer.items, packer.unpacked);
+        }, 50);
+        return;
+    }
+
+    const numCores = navigator.hardwareConcurrency || 4;
+    const M = Math.max(1, Math.min(numCores, 8)); // 并发数限制在 1-8 之间
+    const workers = [];
+    let completedWorkers = 0;
+    let finished = false;
+
+    const itemsSerialized = itemsToPack.map(it => ({
+        id: it.id, name: it.name, w: it.w, h: it.h, d: it.d, color: it.color, weight: it.weight
+    }));
+
+    const cleanup = () => {
+        finished = true;
+        workers.forEach(w => w.terminate());
+        if (loadingModal) loadingModal.style.display = 'none';
+    };
+
+    // 1. 判断是否符合公维对齐层级拆分装载策略
+    const tempPacker = new Packer(binW, binH, binL);
+    let commonDim = null;
+    if (itemsToPack.length > 0) {
+        const firstItem = itemsToPack[0];
+        const candidates = [firstItem.w, firstItem.h, firstItem.d];
+        for (const cand of candidates) {
+            let isCommon = true;
+            for (const item of itemsToPack) {
+                if (Math.abs(item.w - cand) > 0.1 && Math.abs(item.h - cand) > 0.1 && Math.abs(item.d - cand) > 0.1) {
+                    isCommon = false;
+                    break;
+                }
+            }
+            if (isCommon) {
+                commonDim = cand;
+                break;
+            }
+        }
+    }
+
+    let hasCommonDim = false;
+    let numLayers = 0;
+    if (commonDim) {
+        numLayers = Math.floor(binL / commonDim);
+        if (numLayers >= 1) {
+            hasCommonDim = true;
+        }
+    }
+
+    if (hasCommonDim) {
+        const items2D = itemsToPack.map(item => {
+            let w2d, h2d;
+            if (Math.abs(item.d - commonDim) <= 0.1) {
+                w2d = item.w; h2d = item.h;
+            } else if (Math.abs(item.h - commonDim) <= 0.1) {
+                w2d = item.w; h2d = item.d;
+            } else {
+                w2d = item.h; h2d = item.d;
+            }
+            return { name: item.name, w2d, h2d };
+        });
+
+        const itemTypes = [];
+        const typeMap = new Map();
+        for (const item of items2D) {
+            const key = item.name;
+            if (!typeMap.has(key)) {
+                typeMap.set(key, { name: item.name, w2d: item.w2d, h2d: item.h2d, qty: 0 });
+                itemTypes.push(typeMap.get(key));
+            }
+            typeMap.get(key).qty++;
+        }
+
+        const partitions = tempPacker.getPartitions(itemTypes, numLayers, binW, binH);
+        const totalPartitions = Math.min(30, partitions.length);
+
+        if (totalPartitions > 0) {
+            let partitionsFailed = 0;
+            const step = Math.ceil(totalPartitions / M);
+
+            for (let i = 0; i < M; i++) {
+                const start = i * step;
+                const end = Math.min(totalPartitions, start + step);
+                if (start >= totalPartitions) break;
+
+                const worker = createPackingWorker();
+                workers.push(worker);
+
+                worker.onmessage = function(e) {
+                    if (finished) return;
+                    if (e.data.status === 'success') {
+                        cleanup();
+                        const packed = e.data.items.map(it => {
+                            const item = new Item(it.id, it.name, it.w, it.h, it.d, it.color, it.weight);
+                            item.x = it.x; item.y = it.y; item.z = it.z;
+                            item.setRotation(it.rotationType);
+                            return item;
+                        });
+                        callback(packed, []);
+                    } else {
+                        partitionsFailed += (end - start);
+                        const progress = Math.min(40, Math.floor((partitionsFailed / totalPartitions) * 40));
+                        if (progressBar) progressBar.style.width = `${progress}%`;
+
+                        completedWorkers++;
+                        if (completedWorkers === workers.length) {
+                            runGreedyParallel();
+                        }
+                    }
+                };
+
+                worker.postMessage({
+                    type: 'tryLayerPack',
+                    itemsData: itemsSerialized,
+                    binW, binH, binD: binL,
+                    options: { checkStability, supportRatio },
+                    partitionsRange: [start, end]
+                });
+            }
+            return;
+        }
+    }
+
+    runGreedyParallel();
+
+    function runGreedyParallel() {
+        if (finished) return;
+        workers.forEach(w => w.terminate());
+        workers.length = 0;
+        completedWorkers = 0;
+
+        const numTrials = itemsToPack.length > 200 ? 15 : (itemsToPack.length > 100 ? 30 : 60);
+        const step = Math.ceil(numTrials / M);
+        const greedyResults = [];
+
+        for (let i = 0; i < M; i++) {
+            const start = i * step;
+            const count = Math.min(numTrials - start, step);
+            if (count <= 0) break;
+
+            const worker = createPackingWorker();
+            workers.push(worker);
+
+            worker.onmessage = function(e) {
+                if (finished) return;
+                completedWorkers++;
+                
+                const baseProgress = hasCommonDim ? 40 : 0;
+                const weight = hasCommonDim ? 60 : 100;
+                const progress = baseProgress + Math.floor((completedWorkers / workers.length) * weight);
+                if (progressBar) progressBar.style.width = `${progress}%`;
+
+                if (e.data.status === 'success') {
+                    greedyResults.push(e.data.result);
+                }
+
+                if (completedWorkers === workers.length) {
+                    cleanup();
+                    let best = { items: [], unpacked: [], score: -Infinity };
+                    greedyResults.forEach(res => {
+                        if (res.score > best.score) {
+                            best = res;
+                        }
+                    });
+
+                    const packed = best.items.map(it => {
+                        const item = new Item(it.id, it.name, it.w, it.h, it.d, it.color, it.weight);
+                        item.x = it.x; item.y = it.y; item.z = it.z;
+                        item.setRotation(it.rotationType);
+                        return item;
+                    });
+                    const unpacked = best.unpacked.map(it => {
+                        return new Item(it.id, it.name, it.w, it.h, it.d, it.color, it.weight);
+                    });
+
+                    callback(packed, unpacked);
+                }
+            };
+
+            worker.postMessage({
+                type: 'greedyPack',
+                itemsData: itemsSerialized,
+                binW, binH, binD: binL,
+                options: { checkStability, supportRatio },
+                startTrial: start,
+                numTrials: count
+            });
+        }
+    }
+}
+
+document.getElementById('run-pack-btn').addEventListener('click', () => {
+    if (activeMode !== 'auto') return;
+    
+    stopAnimation();
+
+    const binL = parseFloat(document.getElementById('bin-l').value);
+    const binW = parseFloat(document.getElementById('bin-w').value);
+    const binH = parseFloat(document.getElementById('bin-h').value);
+
+    // 1. 预先校验：是否有单个产品尺寸在任何旋转方向下都超出了箱子的尺寸
+    let oversizedItems = [];
+    inventory.forEach(inv => {
+        const tempItem = new Item('temp', inv.name, inv.w, inv.h, inv.l, inv.color, inv.weight);
+        let canFitAnywhere = false;
+        for (let r = 0; r < 6; r++) {
+            const [rw, rh, rd] = tempItem.getRotatedDimensions(r);
+            if (rw <= binW && rh <= binH && rd <= binL) {
+                canFitAnywhere = true;
+                break;
+            }
+        }
+        if (!canFitAnywhere) {
+            oversizedItems.push(inv);
+        }
+    });
+
+    if (oversizedItems.length > 0) {
+        // 展示超大尺寸错误弹窗
+        const listHtml = oversizedItems.map(inv => 
+            `<li class="modal-bullet-item">❌ ${inv.name}: 尺寸 ${inv.w}x${inv.h}x${inv.l} cm (宽x高x长)</li>`
+        ).join('');
+        
+        showWarningModal(
+            'error',
+            '产品尺寸超出箱子限制',
+            `检测到以下产品即便单独摆放，其部分尺寸也已经超出了您设定的箱子尺寸 (${binW}x${binH}x${binL} cm)，物理上完全无法放入箱子中：`,
+            `请您<strong>修改该产品的长宽高尺寸</strong>使其小于箱子尺寸，或者在上方设置中<strong>增大箱子的尺寸</strong>。`,
+            listHtml
+        );
+        return; // 拦截计算
+    }
+
+    const checkStability = document.getElementById('cfg-stability').checked;
+    const biggerFirst = document.getElementById('cfg-bigger-first').checked;
+
+    // 2. 转换库存货物清单为算法 Item 实例
+    const itemsToPack = [];
+    inventory.forEach(inv => {
+        for (let i = 0; i < inv.qty; i++) {
+            const uniqueId = `auto_${inv.id}_${i}`;
+            const item = new Item(uniqueId, inv.name, inv.w, inv.h, inv.l, inv.color, inv.weight);
+            itemsToPack.push(item);
+        }
+    });
+
+    if (itemsToPack.length === 0) {
+        alert('请先添加至少一件产品盒子到配置中！');
+        return;
+    }
+
+    // 3. 异步并发执行装箱
+    performParallelPacking(itemsToPack, binW, binH, binL, checkStability, 0.5, biggerFirst, (packedItems, unpackedItems) => {
+        autoPackedItems = packedItems;
+        autoUnpackedItems = unpackedItems;
+
+        // 4. 清除并重新初始化动画渲染
+        clearRenderedBoxes();
+        
+        // 5. 判断并展示货物无法完全装载弹窗
+        if (autoUnpackedItems.length > 0) {
+            const unpackedCountMap = new Map();
+            autoUnpackedItems.forEach(item => {
+                unpackedCountMap.set(item.name, (unpackedCountMap.get(item.name) || 0) + 1);
+            });
+
+            const listHtml = Array.from(unpackedCountMap.entries()).map(([name, count]) => 
+                `<li class="modal-bullet-item">⚠️ ${name}: 未能装入 ${count} 件</li>`
+            ).join('');
+
+            showWarningModal(
+                'warning',
+                '部分货物空间不足无法装箱',
+                `由于箱内剩余容积不足，或重力支撑面要求未被满足，以下产品未能全部成功装入箱中（已成功装入 ${autoPackedItems.length} 件）：`,
+                `建议：您可以适当<strong>减少上述货物的装箱数量</strong>，或者在上方设置中<strong>增大箱子的长宽高尺寸</strong>。`,
+                listHtml
+            );
+        }
+
+        // 6. 激活分步动画控制面板
+        document.getElementById('anim-section').style.display = 'block';
+        
+        const slider = document.getElementById('anim-timeline');
+        slider.max = autoPackedItems.length;
+        
+        // 直接展示最终装载完成呈现
+        animationStep = autoPackedItems.length;
+        slider.value = animationStep;
+        
+        updateStepUI();
+        updateStats();
+        showStep(animationStep);
+    });
+});
+
+// 显示全局提示弹窗
+function showWarningModal(type, title, message, suggestion, listHtml = '') {
+    const modal = document.getElementById('warning-modal');
+    const iconContainer = document.getElementById('modal-icon-container');
+    const titleEl = document.getElementById('modal-title');
+    const bodyEl = document.getElementById('modal-body-text');
+
+    // 设置类型图标
+    iconContainer.className = `modal-icon ${type}`;
+    if (type === 'error') {
+        iconContainer.innerHTML = `
+            <svg viewBox="0 0 24 24" style="stroke: var(--danger)">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="15" y1="9" x2="9" y2="15"></line>
+                <line x1="9" y1="9" x2="15" y2="15"></line>
+            </svg>
+        `;
+        titleEl.style.color = 'var(--danger)';
+    } else {
+        iconContainer.innerHTML = `
+            <svg viewBox="0 0 24 24" style="stroke: var(--warning)">
+                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                <line x1="12" y1="9" x2="12" y2="13"></line>
+                <line x1="12" y1="17" x2="12.01" y2="17"></line>
+            </svg>
+        `;
+        titleEl.style.color = 'var(--warning)';
+    }
+
+    // 设置内容
+    titleEl.innerText = title;
+    
+    // 简易 Markdown 加粗解析器，防止遗漏的 ** 被直接渲染为文本
+    const parseBold = (str) => str ? str.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>') : '';
+    
+    let contentHtml = `<p>${parseBold(message)}</p>`;
+    if (listHtml) {
+        contentHtml += `<ul class="modal-bullet-list">${listHtml}</ul>`;
+    }
+    contentHtml += `<div class="modal-suggestion">${parseBold(suggestion)}</div>`;
+    
+    bodyEl.innerHTML = contentHtml;
+
+    // 显示弹窗
+    modal.style.display = 'flex';
+}
+
+// 分步显示装箱物体数
+function showStep(stepCount) {
+    // 先隐藏所有不需要显示的 Mesh
+    renderedItemMeshes.forEach((mesh, id) => {
+        scene.remove(mesh);
+    });
+    renderedItemMeshes.clear();
+
+    // 依次将 0 到 stepCount-1 的物品添加到 3D 场景
+    for (let i = 0; i < stepCount; i++) {
+        const item = autoPackedItems[i];
+        const mesh = createBoxMesh(item);
+        scene.add(mesh);
+        renderedItemMeshes.set(item.id, mesh);
+    }
+}
+
+// 动画播放器核心逻辑
+function updateStepUI() {
+    const counter = document.getElementById('step-counter');
+    counter.innerText = `${animationStep} / ${autoPackedItems.length}`;
+    document.getElementById('anim-timeline').value = animationStep;
+}
+
+function playAnimation() {
+    if (isAnimationPlaying) return;
+    
+    if (animationStep >= autoPackedItems.length) {
+        animationStep = 0; // 从头播放
+    }
+
+    isAnimationPlaying = true;
+    document.getElementById('play-icon').innerHTML = `
+        <rect x="6" y="4" width="4" height="16"></rect>
+        <rect x="14" y="4" width="4" height="16"></rect>
+    `; // 暂停图标
+
+    animationInterval = setInterval(() => {
+        if (animationStep < autoPackedItems.length) {
+            animationStep++;
+            showStep(animationStep);
+            updateStepUI();
+            updateStats();
+        } else {
+            stopAnimation();
+        }
+    }, 600); // 间隔0.6秒放入一个盒子
+}
+
+function stopAnimation() {
+    isAnimationPlaying = false;
+    document.getElementById('play-icon').innerHTML = `<polygon points="5 3 19 12 5 21 5 3"></polygon>`; // 播放图标
+    if (animationInterval) {
+        clearInterval(animationInterval);
+        animationInterval = null;
+    }
+}
+
+document.getElementById('anim-play').addEventListener('click', () => {
+    if (isAnimationPlaying) {
+        stopAnimation();
+    } else {
+        playAnimation();
+    }
+});
+
+document.getElementById('anim-next').addEventListener('click', () => {
+    stopAnimation();
+    if (animationStep < autoPackedItems.length) {
+        animationStep++;
+        showStep(animationStep);
+        updateStepUI();
+        updateStats();
+    }
+});
+
+document.getElementById('anim-prev').addEventListener('click', () => {
+    stopAnimation();
+    if (animationStep > 0) {
+        animationStep--;
+        showStep(animationStep);
+        updateStepUI();
+        updateStats();
+    }
+});
+
+document.getElementById('anim-timeline').addEventListener('input', (e) => {
+    stopAnimation();
+    animationStep = parseInt(e.target.value);
+    showStep(animationStep);
+    updateStepUI();
+    updateStats();
+});
+
+// ==========================================
+// 7. 手动装载模式核心控制逻辑
+// ==========================================
+function manuallyPlaceItem(invItem) {
+    const binL = parseFloat(document.getElementById('bin-l').value);
+    const binW = parseFloat(document.getElementById('bin-w').value);
+    const binH = parseFloat(document.getElementById('bin-h').value);
+
+    const id = 'manual_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
+    // 实例化一个未放置在任何角点的 Item
+    const item = new Item(id, invItem.name, invItem.w, invItem.h, invItem.l, invItem.color, invItem.weight);
+    
+    // 给定一个安全的初始掉落点 (x=0, z=0)，利用重力模拟找到合适的高点落位
+    item.x = 0;
+    item.z = 0;
+    
+    const landingY = Packer.getGravityDropY(item, placedItems, binH);
+    if (landingY === null) {
+        alert('容器底部已无空间容纳新的盒子！');
+        return;
+    }
+    
+    item.y = landingY;
+    placedItems.push(item);
+
+    // 渲染 3D 网格
+    const mesh = createBoxMesh(item);
+    scene.add(mesh);
+    renderedItemMeshes.set(item.id, mesh);
+
+    // 选中新放置 of 盒子
+    selectPlacedItemById(item.id);
+    
+    // 更新清单和利用率统计
+    renderPlacedItemsListUI();
+    updateStats();
+}
+
+// 选中某个盒子
+function selectPlacedItemById(id) {
+    if (selectedPlacedItem) {
+        // 恢复之前盒子的默认材质状态 (非碰撞状态)
+        updatePlacedBoxVisual(selectedPlacedItem, false);
+    }
+
+    if (id === null) {
+        selectedPlacedItem = null;
+        selectedBoxMesh = null;
+        transformControls.detach();
+        removeSelectionHelper();
+        document.getElementById('manual-coords-group').style.display = 'none';
+        document.getElementById('manual-status').innerHTML = `
+            <span style="color: var(--text-muted); text-align: center;">💡 请在右侧3D视口中双击盒子，或在下方列表中选中盒子进行编辑摆放。</span>
+        `;
+        renderPlacedItemsListUI();
+        return;
+    }
+
+    selectedPlacedItem = placedItems.find(item => item.id === id);
+    selectedBoxMesh = renderedItemMeshes.get(id);
+
+    if (selectedPlacedItem && selectedBoxMesh) {
+        // 绑定拖拽变换器 (gizmo)
+        transformControls.attach(selectedBoxMesh);
+
+        // 创建高亮线框
+        createSelectionHelper(selectedBoxMesh);
+
+        // 展开侧边栏详细设置区，并更新范围边界
+        document.getElementById('manual-coords-group').style.display = 'block';
+        document.getElementById('manual-status').innerHTML = `
+            <div style="display: flex; align-items: center; gap: 0.5rem; font-weight: 600;">
+                <div style="width: 10px; height: 10px; border-radius: 50%; background-color: ${selectedPlacedItem.color};"></div>
+                <span>当前选中: ${selectedPlacedItem.name}</span>
+            </div>
+            <div style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 0.2rem;">
+                规格: ${selectedPlacedItem.w}x${selectedPlacedItem.h}x${selectedPlacedItem.d} cm (宽x高x深)
+            </div>
+        `;
+
+        updateManualSliderBounds();
+        updateCoordUI();
+        renderPlacedItemsListUI();
+        
+        // 触发初始重叠碰撞高亮检测
+        checkManualPlacementCollisions();
+    }
+}
+
+// 创建高亮选中线框辅助器
+function createSelectionHelper(mesh) {
+    removeSelectionHelper();
+    
+    // 用稍微宽一些的浅蓝色线框包裹被选中的物体
+    const geometry = mesh.geometry;
+    const edgesGeo = new THREE.EdgesGeometry(geometry);
+    const edgesMat = new THREE.LineBasicMaterial({ color: 0x06b6d4, linewidth: 3 });
+    selectionBoxHelper = new THREE.LineSegments(edgesGeo, edgesMat);
+    selectionBoxHelper.scale.set(1.02, 1.02, 1.02); // 放大一点点，防止两线重叠产生闪烁 (z-fighting)
+    mesh.add(selectionBoxHelper);
+}
+
+// 移除高亮选中辅助线
+function removeSelectionHelper() {
+    if (selectionBoxHelper && selectionBoxHelper.parent) {
+        selectionBoxHelper.parent.remove(selectionBoxHelper);
+    }
+    selectionBoxHelper = null;
+}
+
+// 更新选中盒子滑块的最大范围
+function updateManualSliderBounds() {
+    if (!selectedPlacedItem) return;
+
+    const binL = parseFloat(document.getElementById('bin-l').value);
+    const binW = parseFloat(document.getElementById('bin-w').value);
+    const binH = parseFloat(document.getElementById('bin-h').value);
+
+    // 最大活动范围是容器尺寸减去盒子旋转后的实际尺寸
+    const maxX = Math.max(0, binW - selectedPlacedItem.rw);
+    const maxY = Math.max(0, binH - selectedPlacedItem.rh);
+    const maxZ = Math.max(0, binL - selectedPlacedItem.rd);
+
+    const sliderX = document.getElementById('slider-x');
+    const sliderY = document.getElementById('slider-y');
+    const sliderZ = document.getElementById('slider-z');
+
+    sliderX.max = maxX;
+    sliderY.max = maxY;
+    sliderZ.max = maxZ;
+
+    // 滑块以 1cm 为步进
+    sliderX.step = 1;
+    sliderY.step = 1;
+    sliderZ.step = 1;
+}
+
+// 同步逻辑坐标到手动控制滑块 UI
+function updateCoordUI() {
+    if (!selectedPlacedItem) return;
+
+    document.getElementById('slider-x').value = Math.round(selectedPlacedItem.x);
+    document.getElementById('slider-y').value = Math.round(selectedPlacedItem.y);
+    document.getElementById('slider-z').value = Math.round(selectedPlacedItem.z);
+
+    document.getElementById('val-x').innerText = `${Math.round(selectedPlacedItem.x)} cm`;
+    document.getElementById('val-y').innerText = `${Math.round(selectedPlacedItem.y)} cm`;
+    document.getElementById('val-z').innerText = `${Math.round(selectedPlacedItem.z)} cm`;
+
+    // 旋转模式高亮
+    document.querySelectorAll('.rotation-btn').forEach(btn => {
+        const rot = parseInt(btn.getAttribute('data-rot'));
+        if (rot === selectedPlacedItem.rotationType) {
+            btn.classList.add('active');
+        } else {
+            btn.classList.remove('active');
+        }
+    });
+}
+
+// 绑定手动模式滑动调节事件
+function onCoordSliderChange() {
+    if (!selectedPlacedItem || !selectedBoxMesh) return;
+
+    const x = parseFloat(document.getElementById('slider-x').value);
+    const y = parseFloat(document.getElementById('slider-y').value);
+    const z = parseFloat(document.getElementById('slider-z').value);
+
+    selectedPlacedItem.x = x;
+    selectedPlacedItem.y = y;
+    selectedPlacedItem.z = z;
+
+    updateMeshPosition(selectedBoxMesh, selectedPlacedItem);
+    updateCoordUI();
+    checkManualPlacementCollisions();
+    
+    // 渲染更新
+    renderer.render(scene, camera);
+}
+
+document.getElementById('slider-x').addEventListener('input', onCoordSliderChange);
+document.getElementById('slider-y').addEventListener('input', onCoordSliderChange);
+document.getElementById('slider-z').addEventListener('input', onCoordSliderChange);
+
+// 绑定旋转朝向切换
+document.querySelectorAll('.rotation-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+        if (!selectedPlacedItem || !selectedBoxMesh) return;
+        const rot = parseInt(e.target.getAttribute('data-rot'));
+
+        // 更新旋转朝向
+        selectedPlacedItem.setRotation(rot);
+
+        // 重新更新网格的 3D Geometry
+        scene.remove(selectedBoxMesh);
+        
+        // 实例化一个新网格，尺寸为旋转后的尺寸
+        const newMesh = createBoxMesh(selectedPlacedItem);
+        scene.add(newMesh);
+        
+        renderedItemMeshes.set(selectedPlacedItem.id, newMesh);
+        selectedBoxMesh = newMesh;
+
+        // 重新附加拖拽 Gizmo 和选中框
+        transformControls.attach(selectedBoxMesh);
+        createSelectionHelper(selectedBoxMesh);
+
+        // 更新滑动条边界
+        updateManualSliderBounds();
+        
+        // 限位保护，防止旋转后溢出边界
+        clampItemPosition(selectedPlacedItem);
+        updateMeshPosition(selectedBoxMesh, selectedPlacedItem);
+
+        updateCoordUI();
+        checkManualPlacementCollisions();
+        updateStats();
+    });
+});
+
+// 手动限位保护
+function clampItemPosition(item) {
+    const binL = parseFloat(document.getElementById('bin-l').value);
+    const binW = parseFloat(document.getElementById('bin-w').value);
+    const binH = parseFloat(document.getElementById('bin-h').value);
+
+    item.x = Math.max(0, Math.min(item.x, binW - item.rw));
+    item.y = Math.max(0, Math.min(item.y, binH - item.rh));
+    item.z = Math.max(0, Math.min(item.z, binL - item.rd));
+}
+
+// 移除手动摆放项目
+document.getElementById('btn-delete-placed').addEventListener('click', () => {
+    if (!selectedPlacedItem) return;
+    
+    const id = selectedPlacedItem.id;
+    placedItems = placedItems.filter(item => item.id !== id);
+
+    // 移除 3D mesh
+    const mesh = renderedItemMeshes.get(id);
+    if (mesh) {
+        scene.remove(mesh);
+        renderedItemMeshes.delete(id);
+    }
+
+    selectPlacedItemById(null);
+    renderPlacedItemsListUI();
+    updateStats();
+});
+
+// 一键落底重力辅助
+document.getElementById('btn-gravity-drop').addEventListener('click', () => {
+    if (!selectedPlacedItem || !selectedBoxMesh) return;
+
+    const binH = parseFloat(document.getElementById('bin-h').value);
+    const landingY = Packer.getGravityDropY(selectedPlacedItem, placedItems, binH);
+
+    if (landingY !== null) {
+        selectedPlacedItem.y = landingY;
+        updateMeshPosition(selectedBoxMesh, selectedPlacedItem);
+        updateCoordUI();
+        checkManualPlacementCollisions();
+        updateStats();
+    }
+});
+
+// 监听 3D 轴拉伸 Gizmo 拖动后的坐标转换
+function onGizmoDrag() {
+    if (!selectedPlacedItem || !selectedBoxMesh) return;
+
+    const binL = parseFloat(document.getElementById('bin-l').value);
+    const binW = parseFloat(document.getElementById('bin-w').value);
+    const binH = parseFloat(document.getElementById('bin-h').value);
+
+    // 将 3D 网格位置 x3d, y3d, z3d 反向计算为逻辑坐标 (x,y,z)
+    let rx = selectedBoxMesh.position.x - selectedPlacedItem.rw / 2 + binW / 2;
+    let ry = selectedBoxMesh.position.y - selectedPlacedItem.rh / 2 + 20;
+    let rz = selectedBoxMesh.position.z - selectedPlacedItem.rd / 2 + binL / 2;
+
+    // 对齐网格以实现吸附感 (Snap to 1cm Grid)
+    rx = Math.round(rx);
+    ry = Math.round(ry);
+    rz = Math.round(rz);
+
+    // 强力边界限位约束
+    selectedPlacedItem.x = Math.max(0, Math.min(rx, binW - selectedPlacedItem.rw));
+    selectedPlacedItem.y = Math.max(0, Math.min(ry, binH - selectedPlacedItem.rh));
+    selectedPlacedItem.z = Math.max(0, Math.min(rz, binL - selectedPlacedItem.rd));
+
+    // 更新网格坐标以纠正可能的小数偏差
+    updateMeshPosition(selectedBoxMesh, selectedPlacedItem);
+    
+    // 更新滑块 UI 显示
+    updateCoordUI();
+    
+    // 触发碰撞和非法位置警示
+    checkManualPlacementCollisions();
+    
+    // 更新统计
+    updateStats();
+}
+
+// 物理碰撞和超出边界高亮高阶检测
+function checkManualPlacementCollisions() {
+    let hasCollision = false;
+
+    // A. 容器边缘和极限超出判定
+    const binL = parseFloat(document.getElementById('bin-l').value);
+    const binW = parseFloat(document.getElementById('bin-w').value);
+    const binH = parseFloat(document.getElementById('bin-h').value);
+
+    // B. 遍历已放置盒子做碰撞检测
+    for (const item of placedItems) {
+        if (item.id === selectedPlacedItem.id) continue;
+
+        const boxA = { x: selectedPlacedItem.x, y: selectedPlacedItem.y, z: selectedPlacedItem.z, w: selectedPlacedItem.rw, h: selectedPlacedItem.rh, d: selectedPlacedItem.rd };
+        const boxB = { x: item.x, y: item.y, z: item.z, w: item.rw, h: item.rh, d: item.rd };
+
+        if (boxesOverlap(boxA, boxB)) {
+            hasCollision = true;
+            updatePlacedBoxVisual(item, true);
+        } else {
+            updatePlacedBoxVisual(item, false);
+        }
+    }
+
+    // C. 改变被操控的盒子为红色以作警告
+    updatePlacedBoxVisual(selectedPlacedItem, hasCollision);
+
+    // D. 显示红色悬浮警报条
+    const alertBanner = document.getElementById('collision-alert');
+    if (hasCollision) {
+        alertBanner.style.display = 'flex';
+    } else {
+        alertBanner.style.display = 'none';
+    }
+}
+
+// 辅助方法：修改已摆放网格的高亮材质
+function updatePlacedBoxVisual(item, isColliding) {
+    const mesh = renderedItemMeshes.get(item.id);
+    if (!mesh) return;
+
+    if (isColliding) {
+        mesh.material.color.setHex(0xef4444);
+        mesh.material.transparent = true;
+        mesh.material.opacity = 0.6;
+        mesh.material.roughness = 0.8;
+    } else {
+        mesh.material.color.set(new THREE.Color(item.color));
+        mesh.material.transparent = false;
+        mesh.material.opacity = 1.0;
+        mesh.material.roughness = 0.4;
+    }
+}
+
+// 渲染已摆放盒子列表 UI
+function renderPlacedItemsListUI() {
+    const listDiv = document.getElementById('manual-placed-items');
+    listDiv.innerHTML = '';
+
+    placedItems.forEach(item => {
+        const div = document.createElement('div');
+        const isSelected = selectedPlacedItem && selectedPlacedItem.id === item.id;
+        div.className = `manual-item-row ${isSelected ? 'selected' : ''}`;
+        div.innerHTML = `
+            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                <div style="width: 8px; height: 8px; border-radius: 50%; background-color: ${item.color};"></div>
+                <span class="manual-item-name">${item.name}</span>
+            </div>
+            <span class="manual-item-coords">x:${Math.round(item.x)} y:${Math.round(item.y)} z:${Math.round(item.z)}</span>
+        `;
+        
+        div.addEventListener('click', () => {
+            selectPlacedItemById(item.id);
+        });
+
+        listDiv.appendChild(div);
+    });
+}
+
+// ==========================================
+// 8. 实时数据统计看板更新
+// ==========================================
+function updateStats() {
+    const binL = parseFloat(document.getElementById('bin-l').value) || 60;
+    const binW = parseFloat(document.getElementById('bin-w').value) || 40;
+    const binH = parseFloat(document.getElementById('bin-h').value) || 50;
+
+    // 1. 容器总体积，换算为升 (1L = 1000 cm³)
+    const containerVolume = (binL * binW * binH) / 1000;
+    document.getElementById('stat-container-vol').innerText = `${containerVolume.toFixed(1)} L`;
+
+    let activeItems = [];
+    let unpackCount = 0;
+
+    if (activeMode === 'auto') {
+        activeItems = autoPackedItems.slice(0, animationStep);
+        unpackCount = autoUnpackedItems.length;
+    } else {
+        activeItems = placedItems;
+    }
+
+    // 2. 已装载总体积
+    let packedVolCc = 0;
+    activeItems.forEach(item => {
+        packedVolCc += item.rw * item.rh * item.rd;
+    });
+    const packedVolume = packedVolCc / 1000;
+    document.getElementById('stat-packed-vol').innerText = `${packedVolume.toFixed(1)} L`;
+
+    // 3. 空闲体积
+    const freeVolume = Math.max(0, containerVolume - packedVolume);
+    document.getElementById('stat-free-vol').innerText = `${freeVolume.toFixed(1)} L`;
+
+    // 4. 利用率百分比
+    const utilization = containerVolume > 0 ? (packedVolume / containerVolume) * 100 : 0;
+    
+    // 更新圆形进度环
+    const circle = document.getElementById('efficiency-circle');
+    const textCircle = document.getElementById('efficiency-val-circle');
+    const statusText = document.getElementById('efficiency-status-text');
+
+    const offset = 220 - (220 * Math.min(100, utilization)) / 100;
+    circle.style.strokeDashoffset = offset;
+    textCircle.innerText = `${utilization.toFixed(1)}%`;
+
+    if (activeItems.length === 0) {
+        statusText.innerText = '暂无货物';
+        statusText.style.color = 'var(--text-secondary)';
+    } else if (utilization < 40) {
+        statusText.innerText = '装载空旷';
+        statusText.style.color = 'var(--warning)';
+    } else if (utilization < 75) {
+        statusText.innerText = '利用良好';
+        statusText.style.color = 'var(--primary)';
+    } else {
+        statusText.innerText = '高效满载';
+        statusText.style.color = 'var(--success)';
+    }
+
+    // 5. 数量统计
+    let totalInventoryQty = 0;
+    inventory.forEach(i => totalInventoryQty += i.qty);
+
+    if (activeMode === 'auto') {
+        document.getElementById('stat-packed-count').innerText = `${activeItems.length} / ${totalInventoryQty} 个`;
+    } else {
+        document.getElementById('stat-packed-count').innerText = `${activeItems.length} 个`;
+    }
+
+    // 6. 处理溢出未装入警示栏
+    const warningSection = document.getElementById('warning-section');
+    if (activeMode === 'auto' && unpackCount > 0) {
+        warningSection.style.display = 'flex';
+        document.getElementById('warning-text').innerText = `共有 ${unpackCount} 件货物由于空间限制或重力支撑性校验未通过，未能成功装入。请适当调整容器尺寸或减少配置。`;
+    } else {
+        warningSection.style.display = 'none';
+    }
+
+    // --- 新增重量与泡货统计计算 (v2.0) ---
+    const binEmptyWeight = parseFloat(document.getElementById('bin-empty-weight').value) || 1.5;
+    const binMaxWeight = parseFloat(document.getElementById('bin-max-weight').value) || 21.0;
+    const binDivisor = parseFloat(document.getElementById('bin-divisor').value) || 8000;
+
+    // 计算实际总重
+    let totalWeight = binEmptyWeight;
+    activeItems.forEach(item => {
+        totalWeight += parseFloat(item.weight) || 0;
+    });
+
+    // 更新整箱总重浮动看板
+    const vTotalWeight = document.getElementById('v-total-weight');
+    if (vTotalWeight) {
+        vTotalWeight.innerText = `${totalWeight.toFixed(1)} kg / ${binMaxWeight.toFixed(1)} kg`;
+        if (totalWeight > binMaxWeight) {
+            vTotalWeight.classList.add('danger-weight');
+        } else {
+            vTotalWeight.classList.remove('danger-weight');
+        }
+    }
+
+    // 计算体积泡货值 (cm³ / 泡货系数)
+    const dimWeight = (binL * binW * binH) / binDivisor;
+    const vDimWeight = document.getElementById('v-dim-weight');
+    if (vDimWeight) {
+        let dimWeightText = `${dimWeight.toFixed(1)} kg`;
+        if (dimWeight > totalWeight) {
+            dimWeightText += ` <span style="font-size: 0.7rem; color: var(--warning); font-weight: normal;">(按体积泡货计费)</span>`;
+        }
+        vDimWeight.innerHTML = dimWeightText;
+    }
+
+    // 更新已装入明细
+    const vLoadedDetails = document.getElementById('v-loaded-details');
+    if (vLoadedDetails) {
+        const counts = {};
+        activeItems.forEach(item => {
+            counts[item.name] = (counts[item.name] || 0) + 1;
+        });
+        const details = Object.entries(counts).map(([name, count]) => `${name}x${count}`).join(', ');
+        vLoadedDetails.innerText = details || '暂无货物';
+    }
+}
+
+// ==========================================
+// 8.5. 主题切换与同步 (v2.0)
+// ==========================================
+function syncThreeTheme() {
+    if (!scene) return;
+    const isLight = document.body.classList.contains('light-theme');
+    
+    // 动态调整 Three.js 背景色
+    scene.background.set(isLight ? '#f1f5f9' : '#070b13');
+    
+    // 重新创建网格辅助器
+    if (gridHelper) {
+        scene.remove(gridHelper);
+        if (isLight) {
+            gridHelper = new THREE.GridHelper(200, 50, 0x4f46e5, 0xcbd5e1);
+        } else {
+            gridHelper = new THREE.GridHelper(200, 50, 0x3b82f6, 0x1e293b);
+        }
+        gridHelper.position.y = -20;
+        gridHelper.visible = document.getElementById('view-toggle-grid').classList.contains('active');
+        scene.add(gridHelper);
+    }
+    
+    // 动态更新容器材质颜色
+    if (containerMesh) {
+        containerMesh.material.color.setHex(isLight ? 0xffffff : 0x1e293b);
+    }
+    if (containerEdges) {
+        containerEdges.material.color.setHex(isLight ? 0x4f46e5 : 0x6366f1);
+    }
+    
+    renderer.render(scene, camera);
+}
+
+// ==========================================
+// 8.6. 智能配载数量计算器 (v2.0)
+// ==========================================
+function solveCargoQuantities() {
+    const binL = parseFloat(document.getElementById('bin-l').value) || 60;
+    const binW = parseFloat(document.getElementById('bin-w').value) || 40;
+    const binH = parseFloat(document.getElementById('bin-h').value) || 50;
+    const binEmptyWeight = parseFloat(document.getElementById('bin-empty-weight').value) || 0;
+    const binMaxWeight = parseFloat(document.getElementById('bin-max-weight').value) || 50;
+
+    const V_bin = binL * binW * binH;
+    const maxVolumeLimit = 0.75 * V_bin; // 引入 75% 拼装安全容积余量
+    const maxWeightLimit = binMaxWeight - binEmptyWeight;
+
+    if (inventory.length === 0) {
+        showWarningModal(
+            'warning',
+            '无可用产品',
+            '产品清单为空，请先添加产品盒子！',
+            '请在左侧面板中输入产品规格并点击“添加产品”。'
+        );
+        return;
+    }
+
+    // 初始化分配数组：先满足所有货物的最少数量 (占比系数与最少装货数量在0时不参与计算)
+    const allocated = [];
+    let currentWeight = 0;
+    let currentVolume = 0;
+
+    for (let i = 0; i < inventory.length; i++) {
+        const item = inventory[i];
+        const minQty = parseInt(item.minQty) || 0;
+        allocated[i] = minQty;
+        currentWeight += minQty * (parseFloat(item.weight) || 0);
+        currentVolume += minQty * (parseFloat(item.l) * parseFloat(item.w) * parseFloat(item.h));
+    }
+
+    // 检查最少数量自身是否已超标
+    if (currentWeight > maxWeightLimit) {
+        showWarningModal(
+            'error',
+            '最少数量设置超出承载上限',
+            `所有货物的最少数量重量总和为 ${(currentWeight + binEmptyWeight).toFixed(1)} kg（含箱子空重），已超出箱子承载上限 ${binMaxWeight.toFixed(1)} kg。`,
+            '请减少产品的“最少数量”或者调高箱子的“承载上限”。'
+        );
+        return;
+    }
+    if (currentVolume > maxVolumeLimit) {
+        showWarningModal(
+            'error',
+            '最少数量设置超出安全容积',
+            `所有货物的最少数量体积总和为 ${(currentVolume / 1000).toFixed(1)} L，已超出 75% 的安全容积 ${(maxVolumeLimit / 1000).toFixed(1)} L。`,
+            '请减少产品的“最少数量”或者增大箱子尺寸。'
+        );
+        return;
+    }
+
+    // 标记不参与分配的产品 (配载占比在0时不参与比例拼装计算)
+    const blocked = new Array(inventory.length).fill(false);
+    for (let i = 0; i < inventory.length; i++) {
+        const ratio = parseInt(inventory[i].ratio) || 0;
+        if (ratio <= 0) {
+            blocked[i] = true; // 不参与比例分配计算，锁定在最少数量 (即使为0也锁定)
+        }
+    }
+
+    // 循环贪心配比分配
+    while (true) {
+        // 安全检测：如果总分配数量已经非常大（防止死循环/极端边界造成的卡死）
+        const totalQty = allocated.reduce((sum, q) => sum + q, 0);
+        if (totalQty >= 1000) {
+            break;
+        }
+
+        // 寻找当前未被封顶的且配载偏离比例最小的产品
+        let bestIndex = -1;
+        let minVal = Infinity;
+
+        for (let i = 0; i < inventory.length; i++) {
+            if (blocked[i]) continue;
+            
+            const ratio = parseInt(inventory[i].ratio) || 0;
+            if (ratio <= 0) {
+                blocked[i] = true;
+                continue;
+            }
+            const minQty = parseInt(inventory[i].minQty) || 0;
+            const val = (allocated[i] - minQty) / ratio;
+
+            if (val < minVal) {
+                minVal = val;
+                bestIndex = i;
+            }
+        }
+
+        // 所有产品均已超出物理阈值或不参与计算而被锁死
+        if (bestIndex === -1) {
+            break;
+        }
+
+        const item = inventory[bestIndex];
+        const wgt = parseFloat(item.weight) || 0;
+        const vol = parseFloat(item.l) * parseFloat(item.w) * parseFloat(item.h);
+
+        // 预检：增加 1 件该产品是否会超出重量或容积上限
+        if (currentWeight + wgt > maxWeightLimit) {
+            blocked[bestIndex] = true;
+            continue;
+        }
+        if (currentVolume + vol > maxVolumeLimit) {
+            blocked[bestIndex] = true;
+            continue;
+        }
+
+        // 分配成功，更新累加值
+        allocated[bestIndex]++;
+        currentWeight += wgt;
+        currentVolume += vol;
+    }
+
+    // 将计算分配后的数量结果写回 inventory 列表，并刷新 UI
+    for (let i = 0; i < inventory.length; i++) {
+        inventory[i].qty = allocated[i];
+    }
+
+    renderInventoryUI();
+    updateStats();
+
+    // 触发 3D 重新排布计算呈现
+    document.getElementById('run-pack-btn').click();
+}
+
+// ==========================================
+// 9. 模式切换与初始化逻辑
+// ==========================================
+function switchMode(mode) {
+    if (activeMode === mode) return;
+
+    activeMode = mode;
+    stopAnimation();
+    clearRenderedBoxes();
+
+    const tabAuto = document.getElementById('tab-auto');
+    const tabManual = document.getElementById('tab-manual');
+    const autoPanel = document.getElementById('auto-panel');
+    const manualPanel = document.getElementById('manual-panel');
+    const qtyField = document.getElementById('qty-field');
+
+    if (mode === 'auto') {
+        tabAuto.classList.add('active');
+        tabManual.classList.remove('active');
+        autoPanel.style.display = 'block';
+        manualPanel.style.display = 'none';
+        qtyField.style.display = 'block'; // 自动装箱支持批量添加
+        
+        autoPackedItems = [];
+        autoUnpackedItems = [];
+        document.getElementById('anim-section').style.display = 'none';
+    } else {
+        tabAuto.classList.remove('active');
+        tabManual.classList.add('active');
+        autoPanel.style.display = 'none';
+        manualPanel.style.display = 'block';
+        qtyField.style.display = 'none'; // 手动装载时，侧边栏直接点击“放入1件”
+        
+        placedItems = [];
+        selectPlacedItemById(null);
+        renderPlacedItemsListUI();
+    }
+
+    // 刷新库存 UI
+    renderInventoryUI();
+    
+    // 重置统计看板
+    updateStats();
+    
+    // 渲染更新
+    renderer.render(scene, camera);
+}
+
+document.getElementById('tab-auto').addEventListener('click', () => switchMode('auto'));
+document.getElementById('tab-manual').addEventListener('click', () => switchMode('manual'));
+
+// ==========================================
+// 10. 视口悬浮工具栏功能绑定
+// ==========================================
+
+// A. 相机复位
+document.getElementById('view-reset-camera').addEventListener('click', () => {
+    camera.position.set(70, 70, 100);
+    const h = parseFloat(document.getElementById('bin-h').value) || 50;
+    orbitControls.target.set(0, h / 2 - 20, 0);
+    orbitControls.update();
+});
+
+// B. 网格辅助器开关
+document.getElementById('view-toggle-grid').addEventListener('click', (e) => {
+    let btn = e.target;
+    while (btn.tagName !== 'BUTTON') btn = btn.parentElement;
+
+    const active = btn.classList.toggle('active');
+    gridHelper.visible = active;
+    axesHelper.visible = active;
+    
+    renderer.render(scene, camera);
+});
+
+// C. 容器外壳框线模式切换 (Wireframe / Solid)
+document.getElementById('view-toggle-wireframe').addEventListener('click', (e) => {
+    let btn = e.target;
+    while (btn.tagName !== 'BUTTON') btn = btn.parentElement;
+
+    const active = btn.classList.toggle('active');
+    if (containerMesh) {
+        if (active) {
+            containerMesh.material.opacity = 0.0;
+        } else {
+            const opacity = parseFloat(document.getElementById('view-opacity').value) / 100;
+            containerMesh.material.opacity = opacity;
+        }
+        renderer.render(scene, camera);
+    }
+});
+
+// D. 容器壳透明度拖动
+document.getElementById('view-opacity').addEventListener('input', (e) => {
+    const opacity = parseFloat(e.target.value) / 100;
+    if (containerMesh && !document.getElementById('view-toggle-wireframe').classList.contains('active')) {
+        containerMesh.material.opacity = opacity;
+        renderer.render(scene, camera);
+    }
+});
+
+// ==========================================
+// 11. 初始化启动
+// ==========================================
+window.onload = () => {
+    // A. 建立 3D 渲染视口
+    init3DScene();
+
+    // B. 创建容器
+    updateContainer3D();
+
+    // 容器尺寸与属性输入框联动
+    document.getElementById('bin-l').addEventListener('change', updateContainer3D);
+    document.getElementById('bin-w').addEventListener('change', updateContainer3D);
+    document.getElementById('bin-h').addEventListener('change', updateContainer3D);
+    document.getElementById('bin-empty-weight').addEventListener('change', updateStats);
+    document.getElementById('bin-max-weight').addEventListener('change', updateStats);
+    document.getElementById('bin-divisor').addEventListener('change', updateStats);
+
+    // C. 渲染预设库存
+    renderInventoryUI();
+
+    // D. 初始化数据看板
+    updateStats();
+
+    // E. 绑定弹窗关闭按钮
+    document.getElementById('modal-close-btn').addEventListener('click', () => {
+        document.getElementById('warning-modal').style.display = 'none';
+    });
+
+    // F. 绑定日夜间模式切换按钮 (v2.0)
+    const themeToggleBtn = document.getElementById('theme-toggle');
+    themeToggleBtn.addEventListener('click', () => {
+        const isLight = document.body.classList.toggle('light-theme');
+        if (isLight) {
+            themeToggleBtn.innerHTML = `
+                <svg viewBox="0 0 24 24" style="width: 0.95rem; height: 0.95rem; stroke: currentColor; fill: none; stroke-width: 2;"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+                <span id="theme-text">夜间模式</span>
+            `;
+        } else {
+            themeToggleBtn.innerHTML = `
+                <svg viewBox="0 0 24 24" style="width: 0.95rem; height: 0.95rem; stroke: currentColor; fill: none; stroke-width: 2;"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+                <span id="theme-text">日间模式</span>
+            `;
+        }
+        syncThreeTheme();
+    });
+
+    // G. 绑定智能配载数量计算器 (v2.0)
+    document.getElementById('calc-qty-btn').addEventListener('click', solveCargoQuantities);
+
+    // H. 绑定占比系数与最少装货数量互斥逻辑 (v2.0 优化)
+    const ratioInput = document.getElementById('item-ratio');
+    const minQtyInput = document.getElementById('item-min-qty');
+
+    function handleInputExclusivity() {
+        let ratioVal = parseFloat(ratioInput.value) || 0;
+        let minQtyVal = parseInt(minQtyInput.value) || 0;
+
+        if (ratioInput.value !== '' && parseFloat(ratioInput.value) < 0) {
+            ratioInput.value = "0";
+            ratioVal = 0;
+        }
+        if (minQtyInput.value !== '' && parseInt(minQtyInput.value) < 0) {
+            minQtyInput.value = "0";
+            minQtyVal = 0;
+        }
+
+        if (ratioVal > 0) {
+            minQtyInput.value = "0";
+            minQtyInput.disabled = true;
+        } else if (minQtyVal > 0) {
+            ratioInput.value = "0";
+            ratioInput.disabled = true;
+        } else {
+            ratioInput.disabled = false;
+            minQtyInput.disabled = false;
+        }
+    }
+
+    ratioInput.addEventListener('input', handleInputExclusivity);
+    minQtyInput.addEventListener('input', handleInputExclusivity);
+
+    ratioInput.addEventListener('blur', () => {
+        if (ratioInput.value === '' || isNaN(parseFloat(ratioInput.value))) {
+            ratioInput.value = "0";
+        }
+        handleInputExclusivity();
+    });
+
+    minQtyInput.addEventListener('blur', () => {
+        if (minQtyInput.value === '' || isNaN(parseInt(minQtyInput.value))) {
+            minQtyInput.value = "0";
+        }
+        handleInputExclusivity();
+    });
+
+    // 初始化互斥状态
+    handleInputExclusivity();
+
+    // 点击被禁用的输入框时，提示用户解锁
+    const ratioWrapper = ratioInput.parentElement;
+    const minQtyWrapper = minQtyInput.parentElement;
+
+    ratioWrapper.addEventListener('click', () => {
+        if (ratioInput.disabled) {
+            showWarningModal(
+                'warning',
+                '输入限制提示',
+                '装箱配比与最少数量互斥。',
+                '当前“最少数量”已输入数值。请先清除“最少数量”的数值（将其修改或重置为 0）后，才能输入装箱配比。'
+            );
+        }
+    });
+
+    minQtyWrapper.addEventListener('click', () => {
+        if (minQtyInput.disabled) {
+            showWarningModal(
+                'warning',
+                '输入限制提示',
+                '最少数量与装箱配比互斥。',
+                '当前“装箱配比”已输入数值。请先清除“装箱配比”的数值（将其修改或重置为 0）后，才能输入最少数量。'
+            );
+        }
+    });
+};

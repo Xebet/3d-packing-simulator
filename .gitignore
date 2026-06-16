@@ -1,0 +1,4 @@
+# Ignore log files and system generated files
+*.log
+.system_generated/
+out_test_suite.txt
