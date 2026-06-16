@@ -455,6 +455,12 @@ let cachedWorkerBlobURL = null;
 function createPackingWorker() {
     if (!cachedWorkerBlobURL) {
         const blobContent = `
+            const EPS_OVERLAP = 0.001;
+            const EPS_CONTACT = 0.01;
+            const EPS_STABILITY = 0.05;
+            const EPS_DIMENSION = 0.1;
+            const DEFAULT_SUPPORT_RATIO = 0.5;
+
             const boxesOverlap = ${boxesOverlap.toString()};
             const Item = ${Item.toString()};
             const Packer = ${Packer.toString()};
