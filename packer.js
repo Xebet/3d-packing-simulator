@@ -7,8 +7,15 @@
  * 3. 自适应多策略混合搜索 (Multi-Start Meta-Heuristic)：使用 5 种基础排序策略与 30 次随机打乱，配合不同的轴向压缩权重，秒级内搜索全局最优解。
  */
 
+// 核心常量定义
+const EPS_OVERLAP = 0.001;      // 碰撞检测容差
+const EPS_CONTACT = 0.01;       // 接触面积计算容差
+const EPS_STABILITY = 0.05;     // 稳定性检查容差
+const EPS_DIMENSION = 0.1;      // 公共维度检测容差
+const DEFAULT_SUPPORT_RATIO = 0.5;  // 默认最低支撑率
+
 // 碰撞检测辅助函数：检查两个三维立方体是否在空间上重叠
-function boxesOverlap(a, b, eps = 0.001) {
+function boxesOverlap(a, b, eps = EPS_OVERLAP) {
     return (
         a.x < b.x + b.w - eps && a.x + a.w > b.x + eps &&
         a.y < b.y + b.h - eps && a.y + a.h > b.y + eps &&
@@ -82,7 +89,7 @@ class Packer {
     // 执行多起点最佳适配装箱算法（多维启发式与局部扰动搜索）
     pack(itemsToPack, options = {}) {
         const checkStability = options.checkStability !== false; // 是否校验重力支撑
-        const supportRatio = options.supportRatio !== undefined ? options.supportRatio : 0.5; // 支撑面积占比阈值
+        const supportRatio = options.supportRatio !== undefined ? options.supportRatio : DEFAULT_SUPPORT_RATIO; // 支撑面积占比阈值
 
         this.items = [];
         this.unpacked = [];
@@ -106,7 +113,7 @@ class Packer {
     // 执行子范围区间的贪心装箱试验
     runGreedyPackTrials(itemsToPack, options = {}, startTrial, numTrials) {
         const checkStability = options.checkStability !== false;
-        const supportRatio = options.supportRatio !== undefined ? options.supportRatio : 0.5;
+        const supportRatio = options.supportRatio !== undefined ? options.supportRatio : DEFAULT_SUPPORT_RATIO;
 
         let bestPacking = { items: [], unpacked: [], score: -Infinity };
         let bestScore = -Infinity;
@@ -269,7 +276,7 @@ class Packer {
                             let supportedArea = 0;
                             const bottomArea = rw * rd;
                             for (const pItem of placed) {
-                                if (Math.abs((pItem.y + pItem.rh) - pivot.y) < 0.05) {
+                                if (Math.abs((pItem.y + pItem.rh) - pivot.y) < EPS_STABILITY) {
                                     const xOverlap = Math.max(0, Math.min(pivot.x + rw, pItem.x + pItem.rw) - Math.max(pivot.x, pItem.x));
                                     const zOverlap = Math.max(0, Math.min(pivot.z + rd, pItem.z + pItem.rd) - Math.max(pivot.z, pItem.z));
                                     supportedArea += xOverlap * zOverlap;
@@ -327,7 +334,7 @@ class Packer {
                                 let supportedArea = 0;
                                 const bottomArea = rw * rd;
                                 for (const pItem of placed) {
-                                    if (Math.abs((pItem.y + pItem.rh) - pivot.y) < 0.05) {
+                                    if (Math.abs((pItem.y + pItem.rh) - pivot.y) < EPS_STABILITY) {
                                         const xOverlap = Math.max(0, Math.min(pivot.x + rw, pItem.x + pItem.rw) - Math.max(pivot.x, pItem.x));
                                         const zOverlap = Math.max(0, Math.min(pivot.z + rd, pItem.z + pItem.rd) - Math.max(pivot.z, pItem.z));
                                         supportedArea += xOverlap * zOverlap;
@@ -374,7 +381,7 @@ class Packer {
     // 计算单个候选盒放置时的壁面及物体接触面积 (cm²)
     getPlacementContactArea(box, placed) {
         let contact = 0;
-        const eps = 0.01;
+        const eps = EPS_CONTACT;
 
         // 与容器内壁接触
         if (box.y < eps) contact += box.rw * box.rd; // 底面
@@ -385,6 +392,7 @@ class Packer {
 
         // 与其它放置物品的面接触
         for (const item of placed) {
+            if (item === box || (box.id !== undefined && item.id === box.id)) continue;
             // X 轴邻接 (左右接触)
             if (Math.abs(box.x + box.rw - item.x) < eps || Math.abs(item.x + item.rw - box.x) < eps) {
                 const yOverlap = Math.max(0, Math.min(box.y + box.rh, item.y + item.rh) - Math.max(box.y, item.y));
@@ -413,8 +421,7 @@ class Packer {
         let total = 0;
         for (let i = 0; i < placed.length; i++) {
             const box = placed[i];
-            const others = placed.filter((_, idx) => idx !== i);
-            total += this.getPlacementContactArea(box, others);
+            total += this.getPlacementContactArea(box, placed);
         }
         return total / 2; // 去重折半
     }
@@ -463,7 +470,7 @@ class Packer {
             for (const cand of candidates) {
                 let isCommon = true;
                 for (const item of itemsToPack) {
-                    if (Math.abs(item.w - cand) > 0.1 && Math.abs(item.h - cand) > 0.1 && Math.abs(item.d - cand) > 0.1) {
+                    if (Math.abs(item.w - cand) > EPS_DIMENSION && Math.abs(item.h - cand) > EPS_DIMENSION && Math.abs(item.d - cand) > EPS_DIMENSION) {
                         isCommon = false;
                         break;
                     }
@@ -487,12 +494,12 @@ class Packer {
         // 3. 提取物品在 Z 轴公维对齐后的 2D 尺寸 (w2d, h2d) 及其 3D 旋转映射关系
         const items2D = itemsToPack.map(item => {
             let w2d, h2d, rot3d_0, rot3d_2;
-            if (Math.abs(item.d - commonDim) <= 0.1) {
+            if (Math.abs(item.d - commonDim) <= EPS_DIMENSION) {
                 w2d = item.w;
                 h2d = item.h;
                 rot3d_0 = 0; // [w, h, d]
                 rot3d_2 = 2; // [h, w, d]
-            } else if (Math.abs(item.h - commonDim) <= 0.1) {
+            } else if (Math.abs(item.h - commonDim) <= EPS_DIMENSION) {
                 w2d = item.w;
                 h2d = item.d;
                 rot3d_0 = 1; // [w, d, h]
@@ -598,7 +605,7 @@ class Packer {
                             let supportedArea = 0;
                             const bottomArea = it.rw * it.rd;
                             for (const other of placed3D) {
-                                if (other.id !== it.id && Math.abs((other.y + other.rh) - it.y) < 0.05) {
+                                if (other.id !== it.id && Math.abs((other.y + other.rh) - it.y) < EPS_STABILITY) {
                                     const xOverlap = Math.max(0, Math.min(it.x + it.rw, other.x + other.rw) - Math.max(it.x, other.x));
                                     const zOverlap = Math.max(0, Math.min(it.z + it.rd, other.z + other.rd) - Math.max(it.z, other.z));
                                     supportedArea += xOverlap * zOverlap;
@@ -633,6 +640,7 @@ class Packer {
         const maxArea = crossW * crossH;
 
         const searchPartition = (typeIdx) => {
+            if (partitions.length >= 5000) return;
             if (typeIdx === itemTypes.length) {
                 const layerAreas = [];
                 for (let j = 0; j < numLayers; j++) {
@@ -702,13 +710,13 @@ class Packer {
         let placed = [];
         let pool = [...items];
 
-        pool.sort((a, b) => (b.w2d * b.h2d) - (a.w2d * a.h2d));
+        pool.sort((a, b) => (a.w2d * a.h2d) - (b.w2d * b.h2d));
 
         let nodesVisited = 0;
         const maxNodes = 2000000; // 调大上限以确保能够找到解
 
         const rectsOverlap = (r1, r2) => {
-            const eps = 0.001;
+            const eps = EPS_OVERLAP;
             return (
                 r1.x < r2.x + r2.w - eps && r1.x + r1.w > r2.x + eps &&
                 r1.y < r2.y + r2.h - eps && r1.y + r1.h > r2.y + eps
@@ -779,7 +787,7 @@ class Packer {
                     if (checkStability && pivot.y > 0) {
                         let supportedWidth = 0;
                         for (const p of placed) {
-                            if (Math.abs((p.y + p.h) - pivot.y) < 0.05) {
+                            if (Math.abs((p.y + p.h) - pivot.y) < EPS_STABILITY) {
                                 const xOverlap = Math.max(0, Math.min(pivot.x + r.rw, p.x + p.w) - Math.max(pivot.x, p.x));
                                 supportedWidth += xOverlap;
                             }

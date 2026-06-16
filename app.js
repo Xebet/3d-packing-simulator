@@ -31,6 +31,30 @@ let isAnimationPlaying = false;
 // 缓存所有渲染的物品 Mesh，键为 item.id
 let renderedItemMeshes = new Map();
 
+// 材质缓存，按颜色保存 MeshStandardMaterial 实例，避免重复创建
+const materialCache = new Map();
+
+// 销毁 Mesh 所占用的 GPU 资源
+function disposeMesh(mesh) {
+    if (!mesh) return;
+    mesh.traverse(child => {
+        if (child.geometry) child.geometry.dispose();
+        if (child.material) {
+            if (Array.isArray(child.material)) {
+                child.material.forEach(m => {
+                    if (m && ![...materialCache.values()].includes(m)) {
+                        m.dispose();
+                    }
+                });
+            } else {
+                if (![...materialCache.values()].includes(child.material)) {
+                    child.material.dispose();
+                }
+            }
+        }
+    });
+}
+
 // ==========================================
 // 2. 初始化 Three.js 场景
 // ==========================================
@@ -189,8 +213,14 @@ function updateContainer3D() {
     const h = parseFloat(document.getElementById('bin-h').value) || 50;
 
     // 清理旧容器
-    if (containerMesh) scene.remove(containerMesh);
-    if (containerEdges) scene.remove(containerEdges);
+    if (containerMesh) {
+        disposeMesh(containerMesh);
+        scene.remove(containerMesh);
+    }
+    if (containerEdges) {
+        disposeMesh(containerEdges);
+        scene.remove(containerEdges);
+    }
 
     const isLight = document.body.classList.contains('light-theme');
     const isWireframeActive = document.getElementById('view-toggle-wireframe').classList.contains('active');
@@ -364,11 +394,16 @@ function createBoxMesh(item) {
     // 创建立方体网格物体的辅助函数
     // item.rw, item.rh, item.rd 已经在装箱时确定（由于旋转）
     const geometry = new THREE.BoxGeometry(item.rw, item.rh, item.rd);
-    const material = new THREE.MeshStandardMaterial({
-        color: new THREE.Color(item.color),
-        roughness: 0.4,
-        metalness: 0.1
-    });
+    
+    let material = materialCache.get(item.color);
+    if (!material) {
+        material = new THREE.MeshStandardMaterial({
+            color: new THREE.Color(item.color),
+            roughness: 0.4,
+            metalness: 0.1
+        });
+        materialCache.set(item.color, material);
+    }
 
     const mesh = new THREE.Mesh(geometry, material);
     mesh.castShadow = true;
@@ -402,7 +437,10 @@ function updateMeshPosition(mesh, item) {
 
 // 清除当前场景渲染的所有货物
 function clearRenderedBoxes() {
-    renderedItemMeshes.forEach(mesh => scene.remove(mesh));
+    renderedItemMeshes.forEach(mesh => {
+        scene.remove(mesh);
+        disposeMesh(mesh);
+    });
     renderedItemMeshes.clear();
     if (transformControls) transformControls.detach();
     removeSelectionHelper();
@@ -412,87 +450,91 @@ function clearRenderedBoxes() {
 // 6. 自动装箱模式核心控制逻辑
 // ==========================================
 // Web Worker 动态生成器，绕过本地 file:// CORS 限制
+let cachedWorkerBlobURL = null;
+
 function createPackingWorker() {
-    const blobContent = `
-        const boxesOverlap = ${boxesOverlap.toString()};
-        const Item = ${Item.toString()};
-        const Packer = ${Packer.toString()};
+    if (!cachedWorkerBlobURL) {
+        const blobContent = `
+            const boxesOverlap = ${boxesOverlap.toString()};
+            const Item = ${Item.toString()};
+            const Packer = ${Packer.toString()};
 
-        self.onmessage = function(e) {
-            try {
-                const { type, itemsData, binW, binH, binD, options, partitionsRange, startTrial, numTrials } = e.data;
-                
-                const itemsToPack = itemsData.map(it => {
-                    const item = new Item(it.id, it.name, it.w, it.h, it.d, it.color, it.weight);
-                    return item;
-                });
-                
-                const packer = new Packer(binW, binH, binD);
-                
-                if (type === 'tryLayerPack') {
-                    const result = packer.tryLayerBacktrackingPackWithPartitions(itemsToPack, options.checkStability, options.supportRatio, partitionsRange[0], partitionsRange[1]);
-                    if (result) {
-                        const resultData = result.map(it => ({
-                            id: it.id,
-                            name: it.name,
-                            w: it.w,
-                            h: it.h,
-                            d: it.d,
-                            color: it.color,
-                            weight: it.weight,
-                            x: it.x,
-                            y: it.y,
-                            z: it.z,
-                            rw: it.rw,
-                            rh: it.rh,
-                            rd: it.rd,
-                            rotationType: it.rotationType
-                        }));
-                        self.postMessage({ status: 'success', items: resultData });
-                    } else {
-                        self.postMessage({ status: 'fail' });
+            self.onmessage = function(e) {
+                try {
+                    const { type, itemsData, binW, binH, binD, options, partitionsRange, startTrial, numTrials } = e.data;
+                    
+                    const itemsToPack = itemsData.map(it => {
+                        const item = new Item(it.id, it.name, it.w, it.h, it.d, it.color, it.weight);
+                        return item;
+                    });
+                    
+                    const packer = new Packer(binW, binH, binD);
+                    
+                    if (type === 'tryLayerPack') {
+                        const result = packer.tryLayerBacktrackingPackWithPartitions(itemsToPack, options.checkStability, options.supportRatio, partitionsRange[0], partitionsRange[1]);
+                        if (result) {
+                            const resultData = result.map(it => ({
+                                id: it.id,
+                                name: it.name,
+                                w: it.w,
+                                h: it.h,
+                                d: it.d,
+                                color: it.color,
+                                weight: it.weight,
+                                x: it.x,
+                                y: it.y,
+                                z: it.z,
+                                rw: it.rw,
+                                rh: it.rh,
+                                rd: it.rd,
+                                rotationType: it.rotationType
+                            }));
+                            self.postMessage({ status: 'success', items: resultData });
+                        } else {
+                            self.postMessage({ status: 'fail' });
+                        }
+                    } else if (type === 'greedyPack') {
+                        const result = packer.runGreedyPackTrials(itemsToPack, options, startTrial, numTrials);
+                        const resultData = {
+                            items: result.items.map(it => ({
+                                id: it.id,
+                                name: it.name,
+                                w: it.w,
+                                h: it.h,
+                                d: it.d,
+                                color: it.color,
+                                weight: it.weight,
+                                x: it.x,
+                                y: it.y,
+                                z: it.z,
+                                rw: it.rw,
+                                rh: it.rh,
+                                rd: it.rd,
+                                rotationType: it.rotationType
+                            })),
+                            unpacked: result.unpacked.map(it => ({
+                                id: it.id,
+                                name: it.name,
+                                w: it.w,
+                                h: it.h,
+                                d: it.d,
+                                color: it.color,
+                                weight: it.weight
+                            })),
+                            score: result.score
+                        };
+                        self.postMessage({ status: 'success', result: resultData });
                     }
-                } else if (type === 'greedyPack') {
-                    const result = packer.runGreedyPackTrials(itemsToPack, options, startTrial, numTrials);
-                    const resultData = {
-                        items: result.items.map(it => ({
-                            id: it.id,
-                            name: it.name,
-                            w: it.w,
-                            h: it.h,
-                            d: it.d,
-                            color: it.color,
-                            weight: it.weight,
-                            x: it.x,
-                            y: it.y,
-                            z: it.z,
-                            rw: it.rw,
-                            rh: it.rh,
-                            rd: it.rd,
-                            rotationType: it.rotationType
-                        })),
-                        unpacked: result.unpacked.map(it => ({
-                            id: it.id,
-                            name: it.name,
-                            w: it.w,
-                            h: it.h,
-                            d: it.d,
-                            color: it.color,
-                            weight: it.weight
-                        })),
-                        score: result.score
-                    };
-                    self.postMessage({ status: 'success', result: resultData });
+                } catch (err) {
+                    self.postMessage({ status: 'error', error: err.message });
                 }
-            } catch (err) {
-                self.postMessage({ status: 'error', error: err.message });
-            }
-        };
-    `;
+            };
+        `;
 
-    const blob = new Blob([blobContent], { type: 'application/javascript' });
-    const blobURL = URL.createObjectURL(blob);
-    return new Worker(blobURL);
+        const blob = new Blob([blobContent], { type: 'application/javascript' });
+        cachedWorkerBlobURL = URL.createObjectURL(blob);
+    }
+    return new Worker(cachedWorkerBlobURL);
 }
 
 // 辅助函数：根据物体的实际旋转后尺寸，动态逆向推导其在当前轴向下的 rotationType
@@ -617,6 +659,16 @@ function runSinglePacking(itemsToPack, binW, binH, binL, checkStability, support
                 const worker = createPackingWorker();
                 workers.push(worker);
 
+                worker.onerror = function(err) {
+                    console.error("Worker error in layerPack:", err);
+                    if (finished) return;
+                    partitionsFailed += (end - start);
+                    completedWorkers++;
+                    if (completedWorkers === workers.length) {
+                        runGreedyParallel();
+                    }
+                };
+
                 worker.onmessage = function(e) {
                     if (finished) return;
                     if (e.data.status === 'success') {
@@ -632,6 +684,9 @@ function runSinglePacking(itemsToPack, binW, binH, binL, checkStability, support
                         });
                         callback(packed, []);
                     } else {
+                        if (e.data.status === 'error') {
+                            console.error("Worker reported error in layerPack:", e.data.error);
+                        }
                         partitionsFailed += (end - start);
                         const stepProgress = Math.min(40, Math.floor((partitionsFailed / totalPartitions) * 40));
                         const progress = baseProgress + Math.floor((stepProgress / 100) * weight);
@@ -676,6 +731,31 @@ function runSinglePacking(itemsToPack, binW, binH, binL, checkStability, support
             const worker = createPackingWorker();
             workers.push(worker);
 
+            worker.onerror = function(err) {
+                console.error("Worker error in greedyPack:", err);
+                if (finished) return;
+                completedWorkers++;
+                if (completedWorkers === workers.length) {
+                    cleanup();
+                    let best = { items: [], unpacked: [], score: -Infinity };
+                    greedyResults.forEach(res => {
+                        if (res.score > best.score) {
+                            best = res;
+                        }
+                    });
+                    const packed = best.items.map(it => {
+                        const item = new Item(it.id, it.name, it.w, it.h, it.d, it.color, it.weight);
+                        item.x = it.x; item.y = it.y; item.z = it.z;
+                        item.setRotation(it.rotationType);
+                        return item;
+                    });
+                    const unpacked = best.unpacked.map(it => {
+                        return new Item(it.id, it.name, it.w, it.h, it.d, it.color, it.weight);
+                    });
+                    callback(packed, unpacked);
+                }
+            };
+
             worker.onmessage = function(e) {
                 if (finished) return;
                 completedWorkers++;
@@ -688,6 +768,8 @@ function runSinglePacking(itemsToPack, binW, binH, binL, checkStability, support
 
                 if (e.data.status === 'success') {
                     greedyResults.push(e.data.result);
+                } else if (e.data.status === 'error') {
+                    console.error("Worker reported error in greedyPack:", e.data.error);
                 }
 
                 if (completedWorkers === workers.length) {
@@ -822,6 +904,15 @@ function performParallelPacking(itemsToPack, binW, binH, binL, checkStability, s
 
     function finalizeResult(result) {
         if (loadingModal) loadingModal.style.display = 'none';
+        if (!result) {
+            showWarningModal(
+                'error',
+                '计算失败 (Packing Failed)',
+                '装箱计算未能得出任何可行方案。请检查输入参数是否正确。'
+            );
+            callback([], itemsToPack);
+            return;
+        }
         callback(result.packed, result.unpacked);
     }
 
@@ -981,18 +1072,24 @@ function showWarningModal(type, title, message, suggestion, listHtml = '') {
 
 // 分步显示装箱物体数
 function showStep(stepCount) {
-    // 先隐藏所有不需要显示的 Mesh
-    renderedItemMeshes.forEach((mesh, id) => {
-        scene.remove(mesh);
-    });
-    renderedItemMeshes.clear();
-
-    // 依次将 0 到 stepCount-1 的物品添加到 3D 场景
-    for (let i = 0; i < stepCount; i++) {
+    // 增量式增删 3D 场景中的货物 Mesh，避免全量销毁重建引起的内存抖动和卡顿
+    for (let i = 0; i < autoPackedItems.length; i++) {
         const item = autoPackedItems[i];
-        const mesh = createBoxMesh(item);
-        scene.add(mesh);
-        renderedItemMeshes.set(item.id, mesh);
+        const hasMesh = renderedItemMeshes.has(item.id);
+        if (i < stepCount) {
+            if (!hasMesh) {
+                const mesh = createBoxMesh(item);
+                scene.add(mesh);
+                renderedItemMeshes.set(item.id, mesh);
+            }
+        } else {
+            if (hasMesh) {
+                const mesh = renderedItemMeshes.get(item.id);
+                scene.remove(mesh);
+                disposeMesh(mesh);
+                renderedItemMeshes.delete(item.id);
+            }
+        }
     }
 }
 
@@ -1177,8 +1274,11 @@ function createSelectionHelper(mesh) {
 
 // 移除高亮选中辅助线
 function removeSelectionHelper() {
-    if (selectionBoxHelper && selectionBoxHelper.parent) {
-        selectionBoxHelper.parent.remove(selectionBoxHelper);
+    if (selectionBoxHelper) {
+        if (selectionBoxHelper.parent) {
+            selectionBoxHelper.parent.remove(selectionBoxHelper);
+        }
+        disposeMesh(selectionBoxHelper);
     }
     selectionBoxHelper = null;
 }
@@ -1268,6 +1368,7 @@ document.querySelectorAll('.rotation-btn').forEach(btn => {
 
         // 重新更新网格的 3D Geometry
         scene.remove(selectedBoxMesh);
+        disposeMesh(selectedBoxMesh);
         
         // 实例化一个新网格，尺寸为旋转后的尺寸
         const newMesh = createBoxMesh(selectedPlacedItem);
@@ -1315,6 +1416,7 @@ document.getElementById('btn-delete-placed').addEventListener('click', () => {
     const mesh = renderedItemMeshes.get(id);
     if (mesh) {
         scene.remove(mesh);
+        disposeMesh(mesh);
         renderedItemMeshes.delete(id);
     }
 
@@ -1591,6 +1693,7 @@ function syncThreeTheme() {
     // 重新创建网格辅助器
     if (gridHelper) {
         scene.remove(gridHelper);
+        disposeMesh(gridHelper);
         if (isLight) {
             gridHelper = new THREE.GridHelper(200, 50, 0x4f46e5, 0xcbd5e1);
         } else {
@@ -1762,7 +1865,9 @@ function switchMode(mode) {
 
     if (mode === 'auto') {
         tabAuto.classList.add('active');
+        tabAuto.setAttribute('aria-selected', 'true');
         tabManual.classList.remove('active');
+        tabManual.setAttribute('aria-selected', 'false');
         autoPanel.style.display = 'block';
         manualPanel.style.display = 'none';
         qtyField.style.display = 'block'; // 自动装箱支持批量添加
@@ -1772,7 +1877,9 @@ function switchMode(mode) {
         document.getElementById('anim-section').style.display = 'none';
     } else {
         tabAuto.classList.remove('active');
+        tabAuto.setAttribute('aria-selected', 'false');
         tabManual.classList.add('active');
+        tabManual.setAttribute('aria-selected', 'true');
         autoPanel.style.display = 'none';
         manualPanel.style.display = 'block';
         qtyField.style.display = 'none'; // 手动装载时，侧边栏直接点击“放入1件”

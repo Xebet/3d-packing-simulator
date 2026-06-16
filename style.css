@@ -26,7 +26,7 @@
     --shadow-lg: 0 10px 25px -5px rgba(0, 0, 0, 0.3), 0 8px 10px -6px rgba(0, 0, 0, 0.3);
     --shadow-glow: 0 0 15px var(--primary-glow);
     --radius: 12px;
-    --transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    --transition: background 0.25s, color 0.25s, border-color 0.25s, box-shadow 0.25s, opacity 0.25s, transform 0.25s;
 
     --input-bg: rgba(15, 23, 42, 0.6);
     --group-bg: rgba(30, 41, 59, 0.3);
@@ -132,6 +132,7 @@ body {
 header {
     background: var(--header-bg);
     backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
     border-bottom: 1px solid var(--panel-border);
     padding: 1rem 2rem;
     display: flex;
@@ -197,6 +198,7 @@ main {
     width: 420px;
     background: var(--panel-bg);
     backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
     border-right: 1px solid var(--panel-border);
     display: flex;
     flex-direction: column;
@@ -243,6 +245,7 @@ main {
 .toolbar-group {
     background: var(--toolbar-bg);
     backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
     border: 1px solid var(--panel-border);
     padding: 0.4rem;
     border-radius: var(--radius);
@@ -383,7 +386,7 @@ main {
 }
 
 .btn-primary {
-    background: linear-gradient(135deg, var(--primary), var(--primary));
+    background: var(--primary);
     color: #ffffff; /* 确保高亮模式下前景色为白色，具备足够对比度 */
     box-shadow: var(--shadow-glow);
 }
@@ -548,29 +551,6 @@ main {
     stroke-width: 2;
 }
 
-/* 颜色选择器容器 */
-.color-picker-wrapper {
-    display: flex;
-    gap: 0.4rem;
-}
-
-.color-option {
-    width: 1.5rem;
-    height: 1.5rem;
-    border-radius: 6px;
-    cursor: pointer;
-    border: 2px solid transparent;
-    transition: var(--transition);
-}
-
-.color-option:hover {
-    transform: scale(1.1);
-}
-
-.color-option.active {
-    border-color: var(--text-primary);
-    box-shadow: 0 0 6px rgba(255, 255, 255, 0.5);
-}
 
 /* 动画播放器栏 */
 .anim-controls {
@@ -918,6 +898,7 @@ main {
     background: rgba(239, 68, 68, 0.9);
     border: 1px solid rgba(255, 255, 255, 0.15);
     backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
     border-radius: var(--radius);
     padding: 0.8rem 1.2rem;
     display: flex;
@@ -1012,6 +993,7 @@ main {
     bottom: 0;
     background: rgba(2, 6, 23, 0.75);
     backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1131,6 +1113,7 @@ main {
     transform: translateX(-50%);
     background: var(--panel-bg);
     backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
     border: 1px solid var(--panel-border);
     border-radius: var(--radius);
     padding: 0.6rem 1.2rem;
@@ -1216,6 +1199,7 @@ main {
     z-index: 9991;
     transition: all 0.35s cubic-bezier(0.16, 1, 0.3, 1);
     pointer-events: none;
+    will-change: top, left, width, height;
 }
 
 .tour-tooltip {
@@ -1227,7 +1211,8 @@ main {
     box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5), var(--shadow-glow);
     border-radius: 14px;
     padding: 1.25rem;
-    width: 320px;
+    max-width: 320px;
+    width: calc(100vw - 40px);
     z-index: 9992;
     display: flex;
     flex-direction: column;
@@ -1235,6 +1220,7 @@ main {
     transition: all 0.35s cubic-bezier(0.16, 1, 0.3, 1);
     opacity: 0;
     transform: scale(0.95);
+    will-change: transform, opacity;
 }
 
 .tour-tooltip.active {
@@ -1293,4 +1279,47 @@ main {
     font-size: 0.75rem !important;
     height: auto !important;
     min-width: 60px;
+}
+
+/* 响应式媒体查询 (Responsive Media Queries) */
+@media (max-width: 768px) {
+    body {
+        overflow-y: auto !important;
+        height: auto !important;
+    }
+    main {
+        flex-direction: column !important;
+        height: auto !important;
+        overflow: visible !important;
+    }
+    .sidebar {
+        width: 100% !important;
+        height: auto !important;
+        max-height: none !important;
+        border-right: none !important;
+        border-bottom: 1px solid var(--panel-border) !important;
+    }
+    .viewport-container {
+        min-height: 500px !important;
+        height: 500px !important;
+    }
+    #viewport-stats-header {
+        top: 0.5rem !important;
+        font-size: 0.75rem !important;
+        padding: 0.4rem 0.8rem !important;
+    }
+    .viewport-toolbar {
+        bottom: 0.5rem !important;
+        right: 0.5rem !important;
+    }
+}
+
+/* 减弱动画偏好 (Reduced Motion accessibility preference) */
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+    }
 }
