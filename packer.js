@@ -78,6 +78,14 @@ class Item {
 
 // 装箱核心类
 class Packer {
+    static DEFAULT_SCORE_WEIGHTS = {
+        packedCount: 10000000,
+        packedVolume: 10,
+        maxHeightPenalty: 100,
+        contactArea: 0.1,
+        w_y: 100000
+    };
+
     // 3D 碰撞检测辅助方法：检查指定空间位置及尺寸是否与任何已放置物体冲突（无临时对象分配，高性能）
     static checkCollision(px, py, pz, rw, rh, rd, placed, eps = EPS_OVERLAP) {
         for (let i = 0; i < placed.length; i++) {
@@ -101,6 +109,79 @@ class Packer {
             }
         }
         return false;
+    }
+
+    // Mulberry32 确定性随机数发生器
+    static mulberry32(seed) {
+        return function() {
+            let t = seed += 0x6D2B79F5;
+            t = Math.imul(t ^ (t >>> 15), t | 1);
+            t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+            return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+    }
+
+    // 获取物品独特的非对称三维方向，避免重复计算
+    static getUniqueOrientations(item) {
+        const orientations = [];
+        const seen = new Set();
+        for (let rType = 0; rType < 6; rType++) {
+            const [rw, rh, rd] = item.getRotatedDimensions(rType);
+            const key = `${rw}_${rh}_${rd}`;
+            if (!seen.has(key)) {
+                seen.add(key);
+                orientations.push({ rw, rh, rd, rotationType: rType });
+            }
+        }
+        return orientations;
+    }
+
+    // 自动校验装载结果是否合法，返回 { valid: boolean, errors: Array }
+    static validatePackingResult(placed, binW, binH, binD, checkStability = true, supportRatio = DEFAULT_SUPPORT_RATIO) {
+        const errors = [];
+        const eps = EPS_OVERLAP;
+
+        for (let i = 0; i < placed.length; i++) {
+            const item = placed[i];
+            
+            // 越界检查
+            if (item.x < -eps || item.y < -eps || item.z < -eps) {
+                errors.push({ type: 'NEGATIVE_POSITION', item, detail: `Position is negative: (${item.x}, ${item.y}, ${item.z})` });
+            }
+            if (item.x + item.rw > binW + eps || item.y + item.rh > binH + eps || item.z + item.rd > binD + eps) {
+                errors.push({ type: 'OUT_OF_BOUNDS', item, detail: `Out of container boundaries: max limit (${binW}, ${binH}, ${binD}), got (${item.x + item.rw}, ${item.y + item.rh}, ${item.z + item.rd})` });
+            }
+
+            // 重叠冲突检查
+            for (let j = i + 1; j < placed.length; j++) {
+                const other = placed[j];
+                if (item.x < other.x + other.rw - eps && item.x + item.rw > other.x + eps &&
+                    item.y < other.y + other.rh - eps && item.y + item.rh > other.y + eps &&
+                    item.z < other.z + other.rd - eps && item.z + item.rd > other.z + eps) {
+                    errors.push({ type: 'OVERLAP', itemA: item, itemB: other, detail: `Overlap detected between items ${item.id} and ${other.id}` });
+                }
+            }
+
+            // 支撑性检查
+            if (checkStability && item.y > 0) {
+                let supportedArea = 0;
+                const bottomArea = item.rw * item.rd;
+                for (let j = 0; j < placed.length; j++) {
+                    if (i === j) continue;
+                    const pItem = placed[j];
+                    if (Math.abs((pItem.y + pItem.rh) - item.y) < EPS_STABILITY) {
+                        const xOverlap = Math.max(0, Math.min(item.x + item.rw, pItem.x + pItem.rw) - Math.max(item.x, pItem.x));
+                        const zOverlap = Math.max(0, Math.min(item.z + item.rd, pItem.z + pItem.rd) - Math.max(item.z, pItem.z));
+                        supportedArea += xOverlap * zOverlap;
+                    }
+                }
+                if ((supportedArea / bottomArea) < supportRatio - eps) {
+                    errors.push({ type: 'UNSTABLE', item, detail: `Insufficient support: expected ratio ${supportRatio}, got ${(supportedArea / bottomArea).toFixed(3)}` });
+                }
+            }
+        }
+
+        return { valid: errors.length === 0, errors };
     }
 
     constructor(binW, binH, binD) {
@@ -159,12 +240,12 @@ class Packer {
             (list) => [...list].sort((a, b) => (a.w * a.h * a.d) - (b.w * b.h * b.d))
         ];
 
-        const perturbList = (list, strategyIdx) => {
+        const perturbList = (list, strategyIdx, rng) => {
             const baseSorted = strategies[strategyIdx % strategies.length](list);
             return baseSorted
                 .map((item, idx) => ({
                     item,
-                    key: idx + (Math.random() * 16 - 8)
+                    key: idx + (rng() * 16 - 8)
                 }))
                 .sort((a, b) => a.key - b.key)
                 .map(x => x.item);
@@ -173,6 +254,7 @@ class Packer {
         const limitEnd = startTrial + numTrials;
 
         for (let trial = startTrial; trial < limitEnd; trial++) {
+            const rng = Packer.mulberry32(20260617 + trial);
             let sortedItems;
             let lookAheadK = 1;
             
@@ -181,13 +263,14 @@ class Packer {
                 lookAheadK = trial < strategies.length ? 1 : 8;
                 sortedItems = strategies[strategyIdx](itemsToPack);
             } else {
-                const strategyIdx = Math.floor(Math.random() * strategies.length);
-                sortedItems = perturbList(itemsToPack, strategyIdx);
+                const strategyIdx = Math.floor(rng() * strategies.length);
+                sortedItems = perturbList(itemsToPack, strategyIdx, rng);
                 const kOptions = [1, 2, 4, 8, 12, 16, 24, 32, 48, 9999];
-                lookAheadK = kOptions[Math.floor(Math.random() * kOptions.length)];
+                lookAheadK = kOptions[Math.floor(rng() * kOptions.length)];
             }
 
-            let w_y = 100000;
+            const scoreWeights = options.weights || Packer.DEFAULT_SCORE_WEIGHTS;
+            let w_y = scoreWeights.w_y !== undefined ? scoreWeights.w_y : 100000;
             let w_z, w_x;
             if (trial % 3 === 0) {
                 w_z = 1000;
@@ -201,6 +284,14 @@ class Packer {
             }
 
             const currentPacking = this.runSinglePack(sortedItems, checkStability, supportRatio, w_y, w_z, w_x, lookAheadK);
+
+            // 自动校验所生成结果的合法性
+            const validation = Packer.validatePackingResult(currentPacking.items, this.binW, this.binH, this.binD, checkStability, supportRatio);
+            if (!validation.valid) {
+                console.warn("Trial result validation failed:", validation.errors);
+                continue; // 丢弃非法的解
+            }
+
             const packedCount = currentPacking.items.length;
             let packedVolume = 0;
             let maxHeight = 0;
@@ -211,7 +302,10 @@ class Packer {
                 }
             }
             const totalContact = this.calculateTotalContactArea(currentPacking.items);
-            const trialScore = packedCount * 10000000 + packedVolume * 10 - maxHeight * 100 + totalContact * 0.1;
+            const trialScore = packedCount * scoreWeights.packedCount + 
+                               packedVolume * scoreWeights.packedVolume - 
+                               maxHeight * scoreWeights.maxHeightPenalty + 
+                               totalContact * scoreWeights.contactArea;
 
             if (trialScore > bestScore) {
                 bestScore = trialScore;
@@ -235,10 +329,80 @@ class Packer {
         return bestPacking;
     }
 
-    // 运行单次装入模拟 (多项目前瞻最佳适配机制 - Multi-Item Look-Ahead Best-Fit placement)
+    // 运行单次装入模拟 (基于 EMS 最大空腔与多物前瞻的最佳适配算法)
     runSinglePack(sortedItems, checkStability, supportRatio, w_y, w_z, w_x, lookAheadK) {
         const placed = [];
         const pool = [...sortedItems]; // 待装载货物池
+
+        // 初始时仅有 1 个代表整个容器的最大空腔
+        let spaces = [{ x: 0, y: 0, z: 0, w: this.binW, h: this.binH, d: this.binD }];
+
+        // EMS 切割与更新函数
+        const placeBoxInEMS = (spacesList, box) => {
+            const nextSpaces = [];
+            for (let i = 0; i < spacesList.length; i++) {
+                const s = spacesList[i];
+                // 检查 s 是否与 box 在空间上重叠 (相交)
+                if (s.x + s.w <= box.x + EPS_OVERLAP || box.x + box.rw <= s.x + EPS_OVERLAP ||
+                    s.y + s.h <= box.y + EPS_OVERLAP || box.y + box.rh <= s.y + EPS_OVERLAP ||
+                    s.z + s.d <= box.z + EPS_OVERLAP || box.z + box.rd <= s.z + EPS_OVERLAP) {
+                    // 没有重叠，保留该空间
+                    nextSpaces.push(s);
+                    continue;
+                }
+
+                // 相交，将被 box 切割为最多 6 个子空间
+                // X 轴方向切割
+                if (box.x > s.x) {
+                    nextSpaces.push({ x: s.x, y: s.y, z: s.z, w: box.x - s.x, h: s.h, d: s.d });
+                }
+                if (box.x + box.rw < s.x + s.w) {
+                    nextSpaces.push({ x: box.x + box.rw, y: s.y, z: s.z, w: (s.x + s.w) - (box.x + box.rw), h: s.h, d: s.d });
+                }
+                // Y 轴方向切割
+                if (box.y > s.y) {
+                    nextSpaces.push({ x: s.x, y: s.y, z: s.z, w: s.w, h: box.y - s.y, d: s.d });
+                }
+                if (box.y + box.rh < s.y + s.h) {
+                    nextSpaces.push({ x: s.x, y: box.y + box.rh, z: s.z, w: s.w, h: (s.y + s.h) - (box.y + box.rh), d: s.d });
+                }
+                // Z 轴方向切割
+                if (box.z > s.z) {
+                    nextSpaces.push({ x: s.x, y: s.y, z: s.z, w: s.w, h: s.h, d: box.z - s.z });
+                }
+                if (box.z + box.rd < s.z + s.d) {
+                    nextSpaces.push({ x: s.x, y: s.y, z: box.z + box.rd, w: s.w, h: s.h, d: (s.z + s.d) - (box.z + box.rd) });
+                }
+            }
+
+            // 过滤并合并包含在其它空腔中的子空腔
+            const pruned = [];
+            for (let i = 0; i < nextSpaces.length; i++) {
+                const s1 = nextSpaces[i];
+                if (s1.w <= EPS_OVERLAP || s1.h <= EPS_OVERLAP || s1.d <= EPS_OVERLAP) {
+                    continue;
+                }
+
+                let isContained = false;
+                for (let j = 0; j < nextSpaces.length; j++) {
+                    if (i === j) continue;
+                    const s2 = nextSpaces[j];
+                    if (s1.x >= s2.x - EPS_OVERLAP &&
+                        s1.y >= s2.y - EPS_OVERLAP &&
+                        s1.z >= s2.z - EPS_OVERLAP &&
+                        s1.x + s1.w <= s2.x + s2.w + EPS_OVERLAP &&
+                        s1.y + s1.h <= s2.y + s2.h + EPS_OVERLAP &&
+                        s1.z + s1.d <= s2.z + s2.d + EPS_OVERLAP) {
+                        isContained = true;
+                        break;
+                    }
+                }
+                if (!isContained) {
+                    pruned.push(s1);
+                }
+            }
+            return pruned;
+        };
 
         while (pool.length > 0) {
             let bestChoice = null;
@@ -247,57 +411,49 @@ class Packer {
             // 限制前瞻窗口范围为：[1, 货物池长度] 之间的有效值
             const k = Math.max(1, Math.min(lookAheadK, pool.length));
 
-            // A. 生成放置候选点 (Pivots)
-            const pivots = [[0, 0, 0]];
-            for (const pItem of placed) {
-                pivots.push([pItem.x + pItem.rw, pItem.y, pItem.z]);
-                pivots.push([pItem.x, pItem.y + pItem.rh, pItem.z]);
-                pivots.push([pItem.x, pItem.y, pItem.z + pItem.rd]);
-            }
-
-            // 过滤超出边界和重复的角点
-            const uniquePivots = [];
-            const seen = new Set();
-            for (const [px, py, pz] of pivots) {
-                if (px >= this.binW || py >= this.binH || pz >= this.binD) continue;
-                const key = `${px.toFixed(2)},${py.toFixed(2)},${pz.toFixed(2)}`;
-                if (!seen.has(key)) {
-                    seen.add(key);
-                    uniquePivots.push({ x: px, y: py, z: pz });
-                }
-            }
-
             // 1. 尝试从前瞻窗口内的 K 个货物中选取最适配的进行码放
-            // 采用货物品质类型去重优化，确保相同规格 of 货物只被校验一次，大幅提升大批量装箱时的执行效率
+            // 采用货物品质类型去重优化，确保相同规格的货物只被校验一次
             const processedTypesInWindow = new Set();
             for (let i = 0; i < k; i++) {
                 const item = pool[i];
-                const itemTypeKey = `${item.name}_${item.w}_${item.h}_${item.d}`;
+                const itemTypeKey = `${item.name}_${item.w}_${item.h}_${item.d}_${item.weight || 0}`;
                 if (processedTypesInWindow.has(itemTypeKey)) continue;
                 processedTypesInWindow.add(itemTypeKey);
 
-                for (const pivot of uniquePivots) {
-                    for (let rType = 0; rType < 6; rType++) {
-                        const [rw, rh, rd] = item.getRotatedDimensions(rType);
+                // 获取唯一的非对称旋转方向
+                const uniqueOrientations = Packer.getUniqueOrientations(item);
 
-                        // 越界检查
-                        if (pivot.x + rw > this.binW || pivot.y + rh > this.binH || pivot.z + rd > this.binD) {
+                for (let sIdx = 0; sIdx < spaces.length; sIdx++) {
+                    const s = spaces[sIdx];
+                    const px = s.x;
+                    const py = s.y;
+                    const pz = s.z;
+
+                    for (let rIdx = 0; rIdx < uniqueOrientations.length; rIdx++) {
+                        const rot = uniqueOrientations[rIdx];
+                        const rw = rot.rw;
+                        const rh = rot.rh;
+                        const rd = rot.rd;
+
+                        // 尺寸可行性检查 (是否能完全放入该 EMS 空腔)
+                        if (rw > s.w + EPS_OVERLAP || rh > s.h + EPS_OVERLAP || rd > s.d + EPS_OVERLAP) {
                             continue;
                         }
 
-                        // 碰撞冲突检查
-                        if (Packer.checkCollision(pivot.x, pivot.y, pivot.z, rw, rh, rd, placed, EPS_OVERLAP)) {
+                        // 越界检查 (防止 epsilon 累积误差)
+                        if (px + rw > this.binW || py + rh > this.binH || pz + rd > this.binD) {
                             continue;
                         }
 
                         // 重力支撑性检查
-                        if (checkStability && pivot.y > 0) {
+                        if (checkStability && py > 0) {
                             let supportedArea = 0;
                             const bottomArea = rw * rd;
-                            for (const pItem of placed) {
-                                if (Math.abs((pItem.y + pItem.rh) - pivot.y) < EPS_STABILITY) {
-                                    const xOverlap = Math.max(0, Math.min(pivot.x + rw, pItem.x + pItem.rw) - Math.max(pivot.x, pItem.x));
-                                    const zOverlap = Math.max(0, Math.min(pivot.z + rd, pItem.z + pItem.rd) - Math.max(pivot.z, pItem.z));
+                            for (let pIdx = 0; pIdx < placed.length; pIdx++) {
+                                const pItem = placed[pIdx];
+                                if (Math.abs((pItem.y + pItem.rh) - py) < EPS_STABILITY) {
+                                    const xOverlap = Math.max(0, Math.min(px + rw, pItem.x + pItem.rw) - Math.max(px, pItem.x));
+                                    const zOverlap = Math.max(0, Math.min(pz + rd, pItem.z + pItem.rd) - Math.max(pz, pItem.z));
                                     supportedArea += xOverlap * zOverlap;
                                 }
                             }
@@ -307,49 +463,56 @@ class Packer {
                         }
 
                         // 契合度与壁面接触评分 (传扁平参数，避免分配临时对象)
-                        const contact = this.getPlacementContactArea(pivot.x, pivot.y, pivot.z, rw, rh, rd, placed, item.id);
-                        const score = - (pivot.y + rh) * w_y - (pivot.z + rd) * w_z - (pivot.x + rw) * w_x + contact * 10;
+                        const contact = this.getPlacementContactArea(px, py, pz, rw, rh, rd, placed, item.id);
+                        const score = - (py + rh) * w_y - (pz + rd) * w_z - (px + rw) * w_x + contact * 10;
 
                         if (score > maxScore) {
                             maxScore = score;
-                            bestChoice = { poolIndex: i, pivot, rotationType: rType, item };
+                            bestChoice = { poolIndex: i, x: px, y: py, z: pz, rotationType: rot.rotationType, rw, rh, rd, item };
                         }
                     }
                 }
             }
 
             // 2. 如果前瞻窗口内的所有货物由于尺寸或稳定性限制均无法装载，则扫描窗口外的剩余货物
-            // 这确保了如果有较小的缝隙，可以被排在后面的小件货物（如产品C）及时填补，避免空间碎片化
             if (!bestChoice && k < pool.length) {
                 const processedTypesOutsideWindow = new Set();
                 for (let i = k; i < pool.length; i++) {
                     const item = pool[i];
-                    const itemTypeKey = `${item.name}_${item.w}_${item.h}_${item.d}`;
+                    const itemTypeKey = `${item.name}_${item.w}_${item.h}_${item.d}_${item.weight || 0}`;
                     if (processedTypesOutsideWindow.has(itemTypeKey)) continue;
                     processedTypesOutsideWindow.add(itemTypeKey);
 
-                    for (const pivot of uniquePivots) {
-                        for (let rType = 0; rType < 6; rType++) {
-                            const [rw, rh, rd] = item.getRotatedDimensions(rType);
+                    const uniqueOrientations = Packer.getUniqueOrientations(item);
 
-                            // 越界检查
-                            if (pivot.x + rw > this.binW || pivot.y + rh > this.binH || pivot.z + rd > this.binD) {
+                    for (let sIdx = 0; sIdx < spaces.length; sIdx++) {
+                        const s = spaces[sIdx];
+                        const px = s.x;
+                        const py = s.y;
+                        const pz = s.z;
+
+                        for (let rIdx = 0; rIdx < uniqueOrientations.length; rIdx++) {
+                            const rot = uniqueOrientations[rIdx];
+                            const rw = rot.rw;
+                            const rh = rot.rh;
+                            const rd = rot.rd;
+
+                            if (rw > s.w + EPS_OVERLAP || rh > s.h + EPS_OVERLAP || rd > s.d + EPS_OVERLAP) {
                                 continue;
                             }
 
-                            // 碰撞冲突检查
-                            if (Packer.checkCollision(pivot.x, pivot.y, pivot.z, rw, rh, rd, placed, EPS_OVERLAP)) {
+                            if (px + rw > this.binW || py + rh > this.binH || pz + rd > this.binD) {
                                 continue;
                             }
 
-                            // 重力支撑性检查
-                            if (checkStability && pivot.y > 0) {
+                            if (checkStability && py > 0) {
                                 let supportedArea = 0;
                                 const bottomArea = rw * rd;
-                                for (const pItem of placed) {
-                                    if (Math.abs((pItem.y + pItem.rh) - pivot.y) < EPS_STABILITY) {
-                                        const xOverlap = Math.max(0, Math.min(pivot.x + rw, pItem.x + pItem.rw) - Math.max(pivot.x, pItem.x));
-                                        const zOverlap = Math.max(0, Math.min(pivot.z + rd, pItem.z + pItem.rd) - Math.max(pivot.z, pItem.z));
+                                for (let pIdx = 0; pIdx < placed.length; pIdx++) {
+                                    const pItem = placed[pIdx];
+                                    if (Math.abs((pItem.y + pItem.rh) - py) < EPS_STABILITY) {
+                                        const xOverlap = Math.max(0, Math.min(px + rw, pItem.x + pItem.rw) - Math.max(px, pItem.x));
+                                        const zOverlap = Math.max(0, Math.min(pz + rd, pItem.z + pItem.rd) - Math.max(pz, pItem.z));
                                         supportedArea += xOverlap * zOverlap;
                                     }
                                 }
@@ -358,13 +521,12 @@ class Packer {
                                 }
                             }
 
-                            // 契合度与壁面接触评分 (传扁平参数，避免分配临时对象)
-                            const contact = this.getPlacementContactArea(pivot.x, pivot.y, pivot.z, rw, rh, rd, placed, item.id);
-                            const score = - (pivot.y + rh) * w_y - (pivot.z + rd) * w_z - (pivot.x + rw) * w_x + contact * 10;
+                            const contact = this.getPlacementContactArea(px, py, pz, rw, rh, rd, placed, item.id);
+                            const score = - (py + rh) * w_y - (pz + rd) * w_z - (px + rw) * w_x + contact * 10;
 
                             if (score > maxScore) {
                                 maxScore = score;
-                                bestChoice = { poolIndex: i, pivot, rotationType: rType, item };
+                                bestChoice = { poolIndex: i, x: px, y: py, z: pz, rotationType: rot.rotationType, rw, rh, rd, item };
                             }
                         }
                     }
@@ -375,15 +537,18 @@ class Packer {
             if (bestChoice) {
                 const item = bestChoice.item;
                 const placedItem = new Item(item.id, item.name, item.w, item.h, item.d, item.color, item.weight);
-                placedItem.x = bestChoice.pivot.x;
-                placedItem.y = bestChoice.pivot.y;
-                placedItem.z = bestChoice.pivot.z;
+                placedItem.x = bestChoice.x;
+                placedItem.y = bestChoice.y;
+                placedItem.z = bestChoice.z;
                 placedItem.setRotation(bestChoice.rotationType);
                 placed.push(placedItem);
 
+                // 更新 EMS 空腔列表
+                spaces = placeBoxInEMS(spaces, placedItem);
+
                 pool.splice(bestChoice.poolIndex, 1);
             } else {
-                // 如果池内剩余任何货物在所有可行点与旋转朝向下均无法码放，则装箱结束
+                // 如果池内剩余任何货物在所有可行空间下均无法码放，则装箱结束
                 break;
             }
         }
@@ -758,10 +923,10 @@ class Packer {
         let placed = [];
         let pool = [...items];
 
-        pool.sort((a, b) => (a.w2d * a.h2d) - (b.w2d * b.h2d));
+        pool.sort((a, b) => (b.w2d * b.h2d) - (a.w2d * a.h2d));
 
         let nodesVisited = 0;
-        const maxNodes = 2000000; // 调大上限以确保能够找到解
+        const maxNodes = 100000; // 调大上限以确保能够找到解
 
         const backtrack = () => {
             nodesVisited++;
