@@ -709,7 +709,7 @@ function runSinglePacking(itemsToPack, binW, binH, binL, checkStability, support
                     type: 'tryLayerPack',
                     itemsData: itemsSerialized,
                     binW, binH, binD: binL,
-                    options: { checkStability, supportRatio },
+                    options: { checkStability, supportRatio, seed: 20260617, maxSpaces: 200 },
                     partitionsRange: [start, end]
                 });
             }
@@ -806,7 +806,7 @@ function runSinglePacking(itemsToPack, binW, binH, binL, checkStability, support
                 type: 'greedyPack',
                 itemsData: itemsSerialized,
                 binW, binH, binD: binL,
-                options: { checkStability, supportRatio },
+                options: { checkStability, supportRatio, seed: 20260617, maxSpaces: 200 },
                 startTrial: start,
                 numTrials: count
             });

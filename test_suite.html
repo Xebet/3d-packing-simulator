@@ -99,7 +99,7 @@
         }
 
         function runTests() {
-            document.getElementById('total-count').innerText = "4";
+            document.getElementById('total-count').innerText = "8";
 
             // ==========================================
             // TEST CASE 1: 49-item set with stability check
@@ -198,6 +198,156 @@
                 addResult("无特征公维的传统启发式降级测试", success, details);
             } catch (err) {
                 addResult("无特征公维的传统启发式降级测试", false, err.stack);
+            }
+
+            // ==========================================
+            // TEST CASE 5: Seed Parameterization & Determinism Test
+            // ==========================================
+            try {
+                const binW = 40;
+                const binH = 40;
+                const binL = 40;
+                const items1 = [
+                    new Item("s1", "Box1", 20, 15, 10),
+                    new Item("s2", "Box2", 15, 10, 12),
+                    new Item("s3", "Box3", 12, 12, 12),
+                    new Item("s4", "Box4", 8, 8, 8),
+                    new Item("s5", "Box5", 6, 6, 6)
+                ];
+                const items2 = items1.map(it => new Item(it.id, it.name, it.w, it.h, it.d));
+                const items3 = items1.map(it => new Item(it.id, it.name, it.w, it.h, it.d));
+
+                const packer1 = new Packer(binW, binH, binL);
+                const res1 = packer1.runGreedyPackTrials(items1, { seed: 12345, checkStability: false }, 20, 1);
+
+                const packer2 = new Packer(binW, binH, binL);
+                const res2 = packer2.runGreedyPackTrials(items2, { seed: 12345, checkStability: false }, 20, 1);
+
+                const packer3 = new Packer(binW, binH, binL);
+                const res3 = packer3.runGreedyPackTrials(items3, { seed: 99999, checkStability: false }, 20, 1);
+
+                let identicalRun1And2 = res1.items.length === res2.items.length;
+                if (identicalRun1And2) {
+                    for (let i = 0; i < res1.items.length; i++) {
+                        const it1 = res1.items[i];
+                        const it2 = res2.items.find(x => x.id === it1.id);
+                        if (!it2 || it1.x !== it2.x || it1.y !== it2.y || it1.z !== it2.z || it1.rotationType !== it2.rotationType) {
+                            identicalRun1And2 = false;
+                            break;
+                        }
+                    }
+                }
+
+                let differentRun1And3 = false;
+                if (res1.items.length !== res3.items.length) {
+                    differentRun1And3 = true;
+                } else {
+                    for (let i = 0; i < res1.items.length; i++) {
+                        const it1 = res1.items[i];
+                        const it3 = res3.items.find(x => x.id === it1.id);
+                        if (!it3 || it1.x !== it3.x || it1.y !== it3.y || it1.z !== it3.z || it1.rotationType !== it3.rotationType) {
+                            differentRun1And3 = true;
+                            break;
+                        }
+                    }
+                }
+
+                const success = identicalRun1And2 && differentRun1And3;
+                const details = `Same seed results identical: ${identicalRun1And2 ? 'YES' : 'NO'}\n` +
+                                `Different seed results differ: ${differentRun1And3 ? 'YES' : 'NO'}`;
+                addResult("种子随机数参数确定性与变异性测试", success, details);
+            } catch (err) {
+                addResult("种子随机数参数确定性与变异性测试", false, err.stack);
+            }
+
+            // ==========================================
+            // TEST CASE 6: boxesOverlap Function Rotated & Overlapping Test
+            // ==========================================
+            try {
+                const a = { x: 0, y: 0, z: 0, w: 10, h: 20, d: 30 };
+                const b_overlap = { x: 5, y: 5, z: 5, w: 10, h: 10, d: 10 };
+                const overlap1 = boxesOverlap(a, b_overlap);
+
+                const c_adjacent = { x: 10, y: 0, z: 0, w: 10, h: 20, d: 30 };
+                const overlap2 = boxesOverlap(a, c_adjacent);
+
+                const a_rot = { x: 0, y: 0, z: 0, w: 10, h: 20, d: 30, rw: 30, rh: 10, rd: 20 };
+                const e = { x: 25, y: 0, z: 0, w: 10, h: 10, d: 10 };
+                const overlap3 = boxesOverlap(a_rot, e);
+
+                const success = overlap1 === true && overlap2 === false && overlap3 === true;
+                const details = `Overlap test (Standard overlapping): ${overlap1 ? 'PASS' : 'FAIL'}\n` +
+                                `Adjacent test (Should not overlap): ${!overlap2 ? 'PASS' : 'FAIL'}\n` +
+                                `Rotated dimensions overlap test: ${overlap3 ? 'PASS' : 'FAIL'}`;
+                addResult("boxesOverlap 旋转与重叠判定专项测试", success, details);
+            } catch (err) {
+                addResult("boxesOverlap 旋转与重叠判定专项测试", false, err.stack);
+            }
+
+            // ==========================================
+            // TEST CASE 7: EMS Pruning, Deduplication, & Sorting Validity Test
+            // ==========================================
+            try {
+                const pool = [new Item("p1", "Item", 10, 10, 10)];
+                const spacesList = [
+                    { x: 0, y: 0, z: 0, w: 15, h: 15, d: 15 },
+                    { x: 20, y: 0, z: 0, w: 5, h: 15, d: 15 },
+                    { x: 0, y: 0, z: 0, w: 15, h: 15, d: 15 },
+                    { x: 1, y: 1, z: 1, w: 5, h: 5, d: 5 },
+                    { x: 0, y: 10, z: 0, w: 15, h: 15, d: 15 }
+                ];
+
+                const pruned = Packer.pruneSpaces(spacesList, pool, 10);
+
+                const hasS1 = pruned.some(s => s.x === 0 && s.y === 0 && s.w === 15);
+                const hasS2 = pruned.some(s => s.x === 20);
+                const hasS4 = pruned.some(s => s.x === 1 && s.y === 1);
+                const countS1 = pruned.filter(s => s.x === 0 && s.y === 0 && s.w === 15).length;
+                const isSorted = pruned.length === 2 && pruned[0].y === 0 && pruned[1].y === 10;
+
+                const success = hasS1 && !hasS2 && !hasS4 && countS1 === 1 && isSorted;
+                const details = `Spaces count after pruning: ${pruned.length} (Expected: 2)\n` +
+                                `- Contains valid space: ${hasS1 ? 'YES' : 'NO'}\n` +
+                                `- Pruned too-small space: ${!hasS2 ? 'YES' : 'NO'}\n` +
+                                `- Pruned contained space: ${!hasS4 ? 'YES' : 'NO'}\n` +
+                                `- Deduplicated identical spaces: ${countS1 === 1 ? 'YES' : 'NO'}\n` +
+                                `- Sorted ascending Y->Z->X: ${isSorted ? 'YES' : 'NO'}`;
+                addResult("EMS 空腔剪枝、去重与排序合法性专项测试", success, details);
+            } catch (err) {
+                addResult("EMS 空腔剪枝、去重与排序合法性专项测试", false, err.stack);
+            }
+
+            // ==========================================
+            // TEST CASE 8: supportIndex Hashing & Retrieval Test
+            // ==========================================
+            try {
+                const supportIndex = Packer.createSupportIndex();
+                const item1 = new Item("t1", "Item1", 10, 10, 10);
+                item1.x = 0; item1.y = 0; item1.z = 0;
+                item1.setRotation(0); // rh = 10, Y-top = 10
+
+                const item2 = new Item("t2", "Item2", 10, 15, 10);
+                item2.x = 10; item2.y = 5; item2.z = 0;
+                item2.setRotation(0); // rh = 15, Y-top = 20
+
+                supportIndex.add(item1);
+                supportIndex.add(item2);
+
+                const supportersAt10 = supportIndex.get(10);
+                const supportersAt20 = supportIndex.get(20);
+                const supportersAt15 = supportIndex.get(15);
+
+                const pass1 = supportersAt10.length === 1 && supportersAt10[0].id === "t1";
+                const pass2 = supportersAt20.length === 1 && supportersAt20[0].id === "t2";
+                const pass3 = supportersAt15.length === 0;
+
+                const success = pass1 && pass2 && pass3;
+                const details = `Index retrieval at Y=10: ${pass1 ? 'PASS (found t1)' : 'FAIL'}\n` +
+                                `Index retrieval at Y=20: ${pass2 ? 'PASS (found t2)' : 'FAIL'}\n` +
+                                `Index retrieval at Y=15 (empty): ${pass3 ? 'PASS' : 'FAIL'}`;
+                addResult("支撑索引哈希映射与快速检索专项测试", success, details);
+            } catch (err) {
+                addResult("支撑索引哈希映射与快速检索专项测试", false, err.stack);
             }
 
             document.getElementById('status').innerText = "DONE";
