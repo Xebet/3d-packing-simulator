@@ -640,18 +640,18 @@ class Packer {
                                         const zOverlap = Math.max(0, Math.min(pz + rd, pItem.z + pItem.rd) - Math.max(pz, pItem.z));
                                         supportedArea += xOverlap * zOverlap;
                                     }
+                                    if ((supportedArea / bottomArea) < supportRatio) {
+                                        continue;
+                                    }
                                 }
-                                if ((supportedArea / bottomArea) < supportRatio) {
-                                    continue;
+
+                                const contact = this.getPlacementContactArea(px, py, pz, rw, rh, rd, placed, item.id);
+                                const score = - (py + rh) * w_y - (pz + rd) * w_z - (px + rw) * w_x + contact * 10;
+
+                                if (score > maxScore) {
+                                    maxScore = score;
+                                    bestChoice = { poolIndex: i, x: px, y: py, z: pz, rotationType: rot.rotationType, rw, rh, rd, item };
                                 }
-                            }
-
-                            const contact = this.getPlacementContactArea(px, py, pz, rw, rh, rd, placed, item.id);
-                            const score = - (py + rh) * w_y - (pz + rd) * w_z - (px + rw) * w_x + contact * 10;
-
-                            if (score > maxScore) {
-                                maxScore = score;
-                                bestChoice = { poolIndex: i, x: px, y: py, z: pz, rotationType: rot.rotationType, rw, rh, rd, item };
                             }
                         }
                     }

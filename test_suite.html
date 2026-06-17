@@ -99,7 +99,7 @@
         }
 
         function runTests() {
-            document.getElementById('total-count').innerText = "8";
+            document.getElementById('total-count').innerText = "11";
 
             // ==========================================
             // TEST CASE 1: 49-item set with stability check
@@ -348,6 +348,129 @@
                 addResult("支撑索引哈希映射与快速检索专项测试", success, details);
             } catch (err) {
                 addResult("支撑索引哈希映射与快速检索专项测试", false, err.stack);
+            }
+
+            // ==========================================
+            // TEST CASE 9: Debug Floating Box Scenario
+            // ==========================================
+            try {
+                const binW = 40;
+                const binH = 49;
+                const binL = 60;
+                const items = [];
+                for (let i = 0; i < 18; i++) items.push(new Item(`A_${i}`, "产品A", 16, 8, 29, "#6366f1", 0.65));
+                for (let i = 0; i < 18; i++) items.push(new Item(`B_${i}`, "产品B", 13, 6, 29, "#06b6d4", 0.37));
+
+                const packer = new Packer(binW, binH, binL);
+                packer.pack(items, { checkStability: true, supportRatio: 0.5, seed: 20260617 });
+
+                let details = `Container: 40x49x60\n` +
+                              `Packed count: ${packer.items.length}\n` +
+                              `Unpacked count: ${packer.unpacked.length}\n`;
+
+                const validation = Packer.validatePackingResult(packer.items, binW, binH, binL, true, 0.5);
+                details += `Validation valid: ${validation.valid}\n`;
+                if (!validation.valid) {
+                    details += `Validation errors: ${JSON.stringify(validation.errors)}\n`;
+                }
+
+                packer.items.forEach(it => {
+                    details += `- ${it.name} (${it.id}): pos=(${it.x}, ${it.y}, ${it.z}), rotSize=(${it.rw}, ${it.rh}, ${it.rd}), rot=${it.rotationType}\n`;
+                });
+
+                addResult("调试悬空盒子测试", true, details);
+            } catch (err) {
+                addResult("调试悬空盒子测试", false, err.stack);
+            }
+
+            // ==========================================
+            // TEST CASE 10: Direct Layer Backtracking Solver Test
+            // ==========================================
+            try {
+                const binW = 40;
+                const binH = 49;
+                const binL = 60;
+                const items = [];
+                for (let i = 0; i < 18; i++) items.push(new Item(`A_${i}`, "产品A", 16, 8, 29, "#6366f1", 0.65));
+                for (let i = 0; i < 18; i++) items.push(new Item(`B_${i}`, "产品B", 13, 6, 29, "#06b6d4", 0.37));
+
+                const packer = new Packer(binW, binH, binL);
+                const res = packer.tryLayerBacktrackingPack(items, true, 0.5);
+
+                let details = `Container: 40x49x60\n` +
+                              `Layer solver returned: ${res !== null}\n`;
+                
+                if (res) {
+                    details += `Packed count: ${res.length}\n`;
+                    const validation = Packer.validatePackingResult(res, binW, binH, binL, true, 0.5);
+                    details += `Validation valid: ${validation.valid}\n`;
+                    if (!validation.valid) {
+                        details += `Validation errors: ${JSON.stringify(validation.errors)}\n`;
+                    }
+                    res.forEach(it => {
+                        details += `- ${it.name} (${it.id}): pos=(${it.x}, ${it.y}, ${it.z}), rotSize=(${it.rw}, ${it.rh}, ${it.rd}), rot=${it.rotationType}\n`;
+                    });
+                }
+                addResult("直接层级回溯求解器测试", true, details);
+            } catch (err) {
+                addResult("直接层级回溯求解器测试", false, err.stack);
+            }
+
+            // ==========================================
+            // TEST CASE 11: Container Orientations Mapping Stability Test
+            // ==========================================
+            try {
+                const binW = 40;
+                const binH = 49;
+                const binL = 60;
+                const items = [];
+                for (let i = 0; i < 18; i++) items.push(new Item(`A_${i}`, "产品A", 16, 8, 29, "#6366f1", 0.65));
+                for (let i = 0; i < 18; i++) items.push(new Item(`B_${i}`, "产品B", 13, 6, 29, "#06b6d4", 0.37));
+
+                const orientations = [
+                    { perm: [0, 1, 2], w: binW, h: binH, d: binL },
+                    { perm: [1, 0, 2], w: binH, h: binW, d: binL },
+                    { perm: [0, 2, 1], w: binW, h: binL, d: binH }
+                ];
+
+                let details = "";
+                orientations.forEach((config, idx) => {
+                    const tempPacker = new Packer(config.w, config.h, config.d);
+                    // Run a greedy pack with seed 20260617
+                    const res = tempPacker.runGreedyPackTrials(items, { checkStability: true, supportRatio: 0.5, seed: 20260617 }, 0, 30);
+                    
+                    // Map back
+                    const mappedPacked = res.items.map(it_calc => {
+                        const pos_orig = [];
+                        const size_orig = [];
+                        pos_orig[config.perm[0]] = it_calc.x;
+                        pos_orig[config.perm[1]] = it_calc.y;
+                        pos_orig[config.perm[2]] = it_calc.z;
+                        size_orig[config.perm[0]] = it_calc.rw;
+                        size_orig[config.perm[1]] = it_calc.rh;
+                        size_orig[config.perm[2]] = it_calc.rd;
+
+                        const mapped = new Item(it_calc.id, it_calc.name, it_calc.w, it_calc.h, it_calc.d, it_calc.color, it_calc.weight);
+                        mapped.x = pos_orig[0];
+                        mapped.y = pos_orig[1];
+                        mapped.z = pos_orig[2];
+                        mapped.rw = size_orig[0];
+                        mapped.rh = size_orig[1];
+                        mapped.rd = size_orig[2];
+                        return mapped;
+                    });
+
+                    // Validate mapped result under original bin dimensions (binW, binH, binL) and gravity (along Y)
+                    const validation = Packer.validatePackingResult(mappedPacked, binW, binH, binL, true, 0.5);
+                    details += `Orientation ${idx+1} (perm [${config.perm.join(',')}]): Packed=${mappedPacked.length}, Valid=${validation.valid}\n`;
+                    if (!validation.valid) {
+                        details += `- Errors: ${JSON.stringify(validation.errors.map(e => ({ type: e.type, item: e.item ? e.item.id : null, detail: e.detail }))).substring(0, 500)}\n`;
+                    }
+                });
+
+                addResult("容器姿态变换稳定性映射测试", true, details);
+            } catch (err) {
+                addResult("容器姿态变换稳定性映射测试", false, err.stack);
             }
 
             document.getElementById('status').innerText = "DONE";

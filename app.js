@@ -893,15 +893,21 @@ function performParallelPacking(itemsToPack, binW, binH, binL, checkStability, s
                 utilization: currentVolumeUtil
             };
 
-            // 如果当前姿态已经能够 100% 完美装入所有箱体，则提前终止后续计算
-            if (currentScore === itemsToPack.length) {
-                finalizeResult(result);
-                return;
-            }
+            // 校验转换回原始坐标系后的物理合法性 (主要是重力稳定性)
+            const validation = Packer.validatePackingResult(mappedPacked, binW, binH, binL, checkStability, supportRatio);
+            if (validation.valid) {
+                // 如果当前姿态已经能够 100% 完美装入所有箱体，则提前终止后续计算
+                if (currentScore === itemsToPack.length) {
+                    finalizeResult(result);
+                    return;
+                }
 
-            // 对比并保存最优方案（优先比拼装载数量，其次比拼体积利用率）
-            if (!bestResult || currentScore > bestResult.score || (currentScore === bestResult.score && currentVolumeUtil > bestResult.utilization)) {
-                bestResult = result;
+                // 对比并保存最优方案（优先比拼装载数量，其次比拼体积利用率）
+                if (!bestResult || currentScore > bestResult.score || (currentScore === bestResult.score && currentVolumeUtil > bestResult.utilization)) {
+                    bestResult = result;
+                }
+            } else {
+                console.warn(`Orientation ${idx + 1} mapped layout is invalid/unstable under upright gravity, discarded.`, validation.errors);
             }
 
             // 继续计算下一种姿态
