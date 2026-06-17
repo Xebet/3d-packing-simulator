@@ -1,5 +1,5 @@
 /**
- * 3D装箱模拟器算法核心模块 - packer.js (v2.2 智能升级版)
+ * 3D装箱模拟器算法核心模块 - packer.js (v2.3 极致优化版)
  * 
  * 升级为：多起点局部搜索最佳适配算法 (Multi-Start Best-Fit Scoring Heuristic)
  * 1. 空间接触面积计算 (Contact Area Maximization)：使箱子自动紧贴容器边角或其他箱子，消除局部空洞。
@@ -78,6 +78,31 @@ class Item {
 
 // 装箱核心类
 class Packer {
+    // 3D 碰撞检测辅助方法：检查指定空间位置及尺寸是否与任何已放置物体冲突（无临时对象分配，高性能）
+    static checkCollision(px, py, pz, rw, rh, rd, placed, eps = EPS_OVERLAP) {
+        for (let i = 0; i < placed.length; i++) {
+            const p = placed[i];
+            if (px < p.x + p.rw - eps && px + rw > p.x + eps &&
+                py < p.y + p.rh - eps && py + rh > p.y + eps &&
+                pz < p.z + p.rd - eps && pz + rd > p.z + eps) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // 2D 碰撞检测辅助方法：无临时对象分配，高性能
+    static checkCollision2D(px, py, rw, rh, placedList, eps = EPS_OVERLAP) {
+        for (let i = 0; i < placedList.length; i++) {
+            const p = placedList[i];
+            if (px < p.x + p.w - eps && px + rw > p.x + eps &&
+                py < p.y + p.h - eps && py + rh > p.y + eps) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     constructor(binW, binH, binD) {
         this.binW = binW; // 容器宽度
         this.binH = binH; // 容器高度
@@ -261,15 +286,9 @@ class Packer {
                         }
 
                         // 碰撞冲突检查
-                        const candidateBox = { x: pivot.x, y: pivot.y, z: pivot.z, w: rw, h: rh, d: rd };
-                        let collision = false;
-                        for (const pItem of placed) {
-                            if (boxesOverlap(candidateBox, { x: pItem.x, y: pItem.y, z: pItem.z, w: pItem.rw, h: pItem.rh, d: pItem.rd })) {
-                                collision = true;
-                                break;
-                            }
+                        if (Packer.checkCollision(pivot.x, pivot.y, pivot.z, rw, rh, rd, placed, EPS_OVERLAP)) {
+                            continue;
                         }
-                        if (collision) continue;
 
                         // 重力支撑性检查
                         if (checkStability && pivot.y > 0) {
@@ -287,8 +306,8 @@ class Packer {
                             }
                         }
 
-                        // 契合度与壁面接触评分
-                        const contact = this.getPlacementContactArea({ x: pivot.x, y: pivot.y, z: pivot.z, rw, rh, rd }, placed);
+                        // 契合度与壁面接触评分 (传扁平参数，避免分配临时对象)
+                        const contact = this.getPlacementContactArea(pivot.x, pivot.y, pivot.z, rw, rh, rd, placed, item.id);
                         const score = - (pivot.y + rh) * w_y - (pivot.z + rd) * w_z - (pivot.x + rw) * w_x + contact * 10;
 
                         if (score > maxScore) {
@@ -319,15 +338,9 @@ class Packer {
                             }
 
                             // 碰撞冲突检查
-                            const candidateBox = { x: pivot.x, y: pivot.y, z: pivot.z, w: rw, h: rh, d: rd };
-                            let collision = false;
-                            for (const pItem of placed) {
-                                if (boxesOverlap(candidateBox, { x: pItem.x, y: pItem.y, z: pItem.z, w: pItem.rw, h: pItem.rh, d: pItem.rd })) {
-                                    collision = true;
-                                    break;
-                                }
+                            if (Packer.checkCollision(pivot.x, pivot.y, pivot.z, rw, rh, rd, placed, EPS_OVERLAP)) {
+                                continue;
                             }
-                            if (collision) continue;
 
                             // 重力支撑性检查
                             if (checkStability && pivot.y > 0) {
@@ -345,8 +358,8 @@ class Packer {
                                 }
                             }
 
-                            // 契合度与壁面接触评分
-                            const contact = this.getPlacementContactArea({ x: pivot.x, y: pivot.y, z: pivot.z, rw, rh, rd }, placed);
+                            // 契合度与壁面接触评分 (传扁平参数，避免分配临时对象)
+                            const contact = this.getPlacementContactArea(pivot.x, pivot.y, pivot.z, rw, rh, rd, placed, item.id);
                             const score = - (pivot.y + rh) * w_y - (pivot.z + rd) * w_z - (pivot.x + rw) * w_x + contact * 10;
 
                             if (score > maxScore) {
@@ -378,37 +391,63 @@ class Packer {
         return { items: placed, unpacked: pool };
     }
 
-    // 计算单个候选盒放置时的壁面及物体接触面积 (cm²)
-    getPlacementContactArea(box, placed) {
-        let contact = 0;
+    // 计算单个候选盒放置时的壁面及物体接触面积 (cm²) - 支持扁平坐标和尺寸参数以避免临时对象分配
+    getPlacementContactArea(boxOrX, placedOrPy, pz, rw, rh, rd, placed, boxId) {
+        let px, py, pzVal, rwVal, rhVal, rdVal, placedList, idVal;
         const eps = EPS_CONTACT;
 
+        if (typeof boxOrX === 'object') {
+            const box = boxOrX;
+            px = box.x;
+            py = box.y;
+            pzVal = box.z;
+            rwVal = box.rw;
+            rhVal = box.rh;
+            rdVal = box.rd;
+            placedList = placedOrPy;
+            idVal = box.id;
+        } else {
+            px = boxOrX;
+            py = placedOrPy;
+            pzVal = pz;
+            rwVal = rw;
+            rhVal = rh;
+            rdVal = rd;
+            placedList = placed;
+            idVal = boxId;
+        }
+
+        let contact = 0;
+
         // 与容器内壁接触
-        if (box.y < eps) contact += box.rw * box.rd; // 底面
-        if (box.x < eps) contact += box.rh * box.rd; // 左面
-        if (box.z < eps) contact += box.rw * box.rh; // 后面
-        if (Math.abs(box.x + box.rw - this.binW) < eps) contact += box.rh * box.rd; // 右面
-        if (Math.abs(box.z + box.rd - this.binD) < eps) contact += box.rw * box.rh; // 前面
+        if (py < eps) contact += rwVal * rdVal; // 底面
+        if (px < eps) contact += rhVal * rdVal; // 左面
+        if (pzVal < eps) contact += rwVal * rhVal; // 后面
+        if (Math.abs(px + rwVal - this.binW) < eps) contact += rhVal * rdVal; // 右面
+        if (Math.abs(pzVal + rdVal - this.binD) < eps) contact += rwVal * rhVal; // 前面
 
         // 与其它放置物品的面接触
-        for (const item of placed) {
-            if (item === box || (box.id !== undefined && item.id === box.id)) continue;
+        for (let i = 0; i < placedList.length; i++) {
+            const item = placedList[i];
+            if (item.x === px && item.y === py && item.z === pzVal && item.rw === rwVal && item.rh === rhVal && item.rd === rdVal) continue;
+            if (idVal !== undefined && item.id === idVal) continue;
+
             // X 轴邻接 (左右接触)
-            if (Math.abs(box.x + box.rw - item.x) < eps || Math.abs(item.x + item.rw - box.x) < eps) {
-                const yOverlap = Math.max(0, Math.min(box.y + box.rh, item.y + item.rh) - Math.max(box.y, item.y));
-                const zOverlap = Math.max(0, Math.min(box.z + box.rd, item.z + item.rd) - Math.max(box.z, item.z));
+            if (Math.abs(px + rwVal - item.x) < eps || Math.abs(item.x + item.rw - px) < eps) {
+                const yOverlap = Math.max(0, Math.min(py + rhVal, item.y + item.rh) - Math.max(py, item.y));
+                const zOverlap = Math.max(0, Math.min(pzVal + rdVal, item.z + item.rd) - Math.max(pzVal, item.z));
                 contact += yOverlap * zOverlap;
             }
             // Y 轴邻接 (上下接触)
-            if (Math.abs(box.y + box.rh - item.y) < eps || Math.abs(item.y + item.rh - box.y) < eps) {
-                const xOverlap = Math.max(0, Math.min(box.x + box.rw, item.x + item.rw) - Math.max(box.x, item.x));
-                const zOverlap = Math.max(0, Math.min(box.z + box.rd, item.z + item.rd) - Math.max(box.z, item.z));
+            if (Math.abs(py + rhVal - item.y) < eps || Math.abs(item.y + item.rh - py) < eps) {
+                const xOverlap = Math.max(0, Math.min(px + rwVal, item.x + item.rw) - Math.max(px, item.x));
+                const zOverlap = Math.max(0, Math.min(pzVal + rdVal, item.z + item.rd) - Math.max(pzVal, item.z));
                 contact += xOverlap * zOverlap;
             }
             // Z 轴邻接 (前后接触)
-            if (Math.abs(box.z + box.rd - item.z) < eps || Math.abs(item.z + item.rd - box.z) < eps) {
-                const xOverlap = Math.max(0, Math.min(box.x + box.rw, item.x + item.rw) - Math.max(box.x, item.x));
-                const yOverlap = Math.max(0, Math.min(box.y + box.rh, item.y + item.rh) - Math.max(box.y, item.y));
+            if (Math.abs(pzVal + rdVal - item.z) < eps || Math.abs(item.z + item.rd - pzVal) < eps) {
+                const xOverlap = Math.max(0, Math.min(px + rwVal, item.x + item.rw) - Math.max(px, item.x));
+                const yOverlap = Math.max(0, Math.min(py + rhVal, item.y + item.rh) - Math.max(py, item.y));
                 contact += xOverlap * yOverlap;
             }
         }
@@ -627,7 +666,7 @@ class Packer {
         return null;
     }
 
-    // 辅助函数：生成所有合理的层面积分拆组合
+    // 辅助函数：生成所有合理的层面积分拆组合 (采用对称偏差剪枝优化，杜绝组合数爆炸)
     getPartitions(itemTypes, numLayers, crossW, crossH) {
         const partitions = [];
         const currentPartition = Array.from({ length: numLayers }, () => ({}));
@@ -674,15 +713,24 @@ class Packer {
 
             const type = itemTypes[typeIdx];
             const qty = type.qty;
+            const avg = qty / numLayers;
+            const maxDev = Math.max(1, Math.ceil(avg * 0.4));
+            const minQty = Math.max(0, Math.floor(avg - maxDev));
+            const maxQty = Math.min(qty, Math.ceil(avg + maxDev));
 
             const distribute = (layerIdx, remainingQty) => {
                 if (layerIdx === numLayers - 1) {
-                    currentPartition[layerIdx][type.name] = remainingQty;
-                    searchPartition(typeIdx + 1);
+                    if (remainingQty >= minQty && remainingQty <= maxQty) {
+                        currentPartition[layerIdx][type.name] = remainingQty;
+                        searchPartition(typeIdx + 1);
+                    }
                     return;
                 }
 
-                for (let q = 0; q <= remainingQty; q++) {
+                const startQ = Math.max(minQty, remainingQty - (numLayers - 1 - layerIdx) * maxQty);
+                const endQ = Math.min(maxQty, remainingQty - (numLayers - 1 - layerIdx) * minQty);
+
+                for (let q = startQ; q <= endQ; q++) {
                     currentPartition[layerIdx][type.name] = q;
                     distribute(layerIdx + 1, remainingQty - q);
                 }
@@ -714,14 +762,6 @@ class Packer {
 
         let nodesVisited = 0;
         const maxNodes = 2000000; // 调大上限以确保能够找到解
-
-        const rectsOverlap = (r1, r2) => {
-            const eps = EPS_OVERLAP;
-            return (
-                r1.x < r2.x + r2.w - eps && r1.x + r1.w > r2.x + eps &&
-                r1.y < r2.y + r2.h - eps && r1.y + r1.h > r2.y + eps
-            );
-        };
 
         const backtrack = () => {
             nodesVisited++;
@@ -773,15 +813,10 @@ class Packer {
                 for (const pivot of uniquePivots) {
                     if (pivot.x + r.rw > binW || pivot.y + r.rh > binH) continue;
 
-                    const candidate = { x: pivot.x, y: pivot.y, w: r.rw, h: r.rh };
-                    let collision = false;
-                    for (const p of placed) {
-                        if (rectsOverlap(candidate, p)) {
-                            collision = true;
-                            break;
-                        }
+                    // 碰撞冲突检查 (无分配对象，高性能)
+                    if (Packer.checkCollision2D(pivot.x, pivot.y, r.rw, r.rh, placed, EPS_OVERLAP)) {
+                        continue;
                     }
-                    if (collision) continue;
 
                     // 2D 支撑性校验
                     if (checkStability && pivot.y > 0) {

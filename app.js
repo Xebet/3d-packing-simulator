@@ -725,7 +725,8 @@ function runSinglePacking(itemsToPack, binW, binH, binL, checkStability, support
         workers.length = 0;
         completedWorkers = 0;
 
-        const numTrials = itemsToPack.length > 200 ? 15 : (itemsToPack.length > 100 ? 30 : 60);
+        const trialsMultiplier = itemsToPack.length > 200 ? 6 : (itemsToPack.length > 100 ? 10 : 15);
+        const numTrials = Math.max(itemsToPack.length > 200 ? 15 : (itemsToPack.length > 100 ? 30 : 60), M * trialsMultiplier);
         const step = Math.ceil(numTrials / M);
         const greedyResults = [];
 
