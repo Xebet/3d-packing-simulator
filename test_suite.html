@@ -378,7 +378,8 @@
                     details += `- ${it.name} (${it.id}): pos=(${it.x}, ${it.y}, ${it.z}), rotSize=(${it.rw}, ${it.rh}, ${it.rd}), rot=${it.rotationType}\n`;
                 });
 
-                addResult("调试悬空盒子测试", true, details);
+                const success = validation.valid && packer.items.length > 0;
+                addResult("调试悬空盒子测试", success, details);
             } catch (err) {
                 addResult("调试悬空盒子测试", false, err.stack);
             }
@@ -400,10 +401,12 @@
                 let details = `Container: 40x49x60\n` +
                               `Layer solver returned: ${res !== null}\n`;
                 
+                let success = true;
                 if (res) {
                     details += `Packed count: ${res.length}\n`;
                     const validation = Packer.validatePackingResult(res, binW, binH, binL, true, 0.5);
                     details += `Validation valid: ${validation.valid}\n`;
+                    success = validation.valid;
                     if (!validation.valid) {
                         details += `Validation errors: ${JSON.stringify(validation.errors)}\n`;
                     }
@@ -411,7 +414,7 @@
                         details += `- ${it.name} (${it.id}): pos=(${it.x}, ${it.y}, ${it.z}), rotSize=(${it.rw}, ${it.rh}, ${it.rd}), rot=${it.rotationType}\n`;
                     });
                 }
-                addResult("直接层级回溯求解器测试", true, details);
+                addResult("直接层级回溯求解器测试", success, details);
             } catch (err) {
                 addResult("直接层级回溯求解器测试", false, err.stack);
             }
@@ -434,6 +437,7 @@
                 ];
 
                 let details = "";
+                let success = true;
                 orientations.forEach((config, idx) => {
                     const tempPacker = new Packer(config.w, config.h, config.d);
                     // Run a greedy pack with seed 20260617
@@ -463,12 +467,15 @@
                     // Validate mapped result under original bin dimensions (binW, binH, binL) and gravity (along Y)
                     const validation = Packer.validatePackingResult(mappedPacked, binW, binH, binL, true, 0.5);
                     details += `Orientation ${idx+1} (perm [${config.perm.join(',')}]): Packed=${mappedPacked.length}, Valid=${validation.valid}\n`;
+                    if (idx === 0 && !validation.valid) {
+                        success = false;
+                    }
                     if (!validation.valid) {
                         details += `- Errors: ${JSON.stringify(validation.errors.map(e => ({ type: e.type, item: e.item ? e.item.id : null, detail: e.detail }))).substring(0, 500)}\n`;
                     }
                 });
 
-                addResult("容器姿态变换稳定性映射测试", true, details);
+                addResult("容器姿态变换稳定性映射测试", success, details);
             } catch (err) {
                 addResult("容器姿态变换稳定性映射测试", false, err.stack);
             }

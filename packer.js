@@ -218,29 +218,55 @@ class Packer {
         return pruned;
     }
 
-    // 获取空腔底面四个角作为候选位置 (支持去重与范围检验)
-    static getEMSPositions(s, rw, rd) {
-        const positions = [
-            { x: s.x, z: s.z },                        // 左后角
-            { x: s.x + s.w - rw, z: s.z },              // 右后角
-            { x: s.x, z: s.z + s.d - rd },              // 左前角
-            { x: s.x + s.w - rw, z: s.z + s.d - rd }    // 右前角
-        ];
-
+    // 获取空腔底面候选位置：EMS 四角 + 已放置物体边界生成的极点
+    static getEMSPositions(s, rw, rd, placed = [], maxPositions = 4) {
         const unique = [];
         const seen = new Set();
-        for (let idx = 0; idx < positions.length; idx++) {
-            const pos = positions[idx];
+
+        const addPosition = (x, z) => {
+            if (unique.length >= maxPositions) return;
             // 确保候选点与尺寸摆放后仍在 EMS 容纳范围
-            if (pos.x >= s.x - EPS_OVERLAP && pos.z >= s.z - EPS_OVERLAP &&
-                pos.x + rw <= s.x + s.w + EPS_OVERLAP && pos.z + rd <= s.z + s.d + EPS_OVERLAP) {
-                const key = `${pos.x.toFixed(2)}_${pos.z.toFixed(2)}`;
+            if (x >= s.x - EPS_OVERLAP && z >= s.z - EPS_OVERLAP &&
+                x + rw <= s.x + s.w + EPS_OVERLAP && z + rd <= s.z + s.d + EPS_OVERLAP) {
+                const key = `${x.toFixed(2)}_${z.toFixed(2)}`;
                 if (!seen.has(key)) {
                     seen.add(key);
-                    unique.push({ x: pos.x, y: s.y, z: pos.z });
+                    unique.push({ x, y: s.y, z });
                 }
             }
+        };
+
+        addPosition(s.x, s.z);
+        addPosition(s.x + s.w - rw, s.z);
+        addPosition(s.x, s.z + s.d - rd);
+        addPosition(s.x + s.w - rw, s.z + s.d - rd);
+
+        if (maxPositions <= 4) {
+            return unique;
         }
+
+        for (let i = placed.length - 1; i >= 0 && unique.length < maxPositions; i--) {
+            const p = placed[i];
+            const sameLayer = p.y <= s.y + EPS_STABILITY && p.y + p.rh > s.y + EPS_OVERLAP;
+            const supportLayer = Math.abs((p.y + p.rh) - s.y) < EPS_STABILITY;
+            if (!sameLayer && !supportLayer) continue;
+
+            const rightX = p.x + p.rw;
+            const leftX = p.x - rw;
+            const frontZ = p.z + p.rd;
+            const backZ = p.z - rd;
+
+            addPosition(rightX, p.z);
+            addPosition(rightX, frontZ - rd);
+            addPosition(leftX, p.z);
+            addPosition(leftX, frontZ - rd);
+            addPosition(p.x, frontZ);
+            addPosition(rightX - rw, frontZ);
+            addPosition(p.x, backZ);
+            addPosition(rightX - rw, backZ);
+        }
+
+        unique.sort((a, b) => (a.z !== b.z) ? a.z - b.z : a.x - b.x);
         return unique;
     }
 
@@ -350,7 +376,8 @@ class Packer {
         let bestPacking = { items: [], unpacked: [], score: -Infinity };
         let bestScore = -Infinity;
 
-        const strategies = [
+        const biggerFirst = options.biggerFirst !== false;
+        const largeFirstStrategies = [
             (list) => [...list].sort((a, b) => (b.w * b.h * b.d) - (a.w * a.h * a.d)),
             (list) => [...list].sort((a, b) => Math.max(b.w, b.h, b.d) - Math.max(a.w, a.h, a.d)),
             (list) => [...list].sort((a, b) => b.h - a.h),
@@ -365,6 +392,22 @@ class Packer {
             }),
             (list) => [...list].sort((a, b) => (a.w * a.h * a.d) - (b.w * b.h * b.d))
         ];
+        const smallFirstStrategies = [
+            (list) => [...list].sort((a, b) => (a.w * a.h * a.d) - (b.w * b.h * b.d)),
+            (list) => [...list].sort((a, b) => Math.min(a.w, a.h, a.d) - Math.min(b.w, b.h, b.d)),
+            (list) => [...list].sort((a, b) => a.h - b.h),
+            (list) => [...list].sort((a, b) => (a.w * a.d) - (b.w * b.d)),
+            (list) => [...list].sort((a, b) => a.w - b.w),
+            (list) => [...list].sort((a, b) => a.d - b.d),
+            (list) => [...list].sort((a, b) => (a.weight || 0) - (b.weight || 0)),
+            (list) => [...list].sort((a, b) => {
+                const volA = a.w * a.h * a.d;
+                const volB = b.w * b.h * b.d;
+                return ((a.weight || 0) / volA) - ((b.weight || 0) / volB);
+            }),
+            (list) => [...list].sort((a, b) => (b.w * b.h * b.d) - (a.w * a.h * a.d))
+        ];
+        const strategies = biggerFirst ? largeFirstStrategies : smallFirstStrategies;
 
         const perturbList = (list, strategyIdx, rng) => {
             const baseSorted = strategies[strategyIdx % strategies.length](list);
@@ -411,7 +454,10 @@ class Packer {
             }
 
             const maxSpaces = options.maxSpaces !== undefined ? options.maxSpaces : 200;
-            const currentPacking = this.runSinglePack(sortedItems, checkStability, supportRatio, w_y, w_z, w_x, lookAheadK, maxSpaces);
+            const maxCandidatePositions = options.maxCandidatePositions !== undefined
+                ? options.maxCandidatePositions
+                : (trial % 5 === 0 ? 16 : 4);
+            const currentPacking = this.runSinglePack(sortedItems, checkStability, supportRatio, w_y, w_z, w_x, lookAheadK, maxSpaces, maxCandidatePositions);
 
             // 自动校验所生成结果的合法性
             const validation = Packer.validatePackingResult(currentPacking.items, this.binW, this.binH, this.binD, checkStability, supportRatio);
@@ -458,7 +504,7 @@ class Packer {
     }
 
     // 运行单次装入模拟 (基于 EMS 最大空腔与多物前瞻的最佳适配算法)
-    runSinglePack(sortedItems, checkStability, supportRatio, w_y, w_z, w_x, lookAheadK, maxSpaces = 200) {
+    runSinglePack(sortedItems, checkStability, supportRatio, w_y, w_z, w_x, lookAheadK, maxSpaces = 200, maxCandidatePositions = 4) {
         const placed = [];
         const pool = [...sortedItems]; // 待装载货物池
 
@@ -543,7 +589,7 @@ class Packer {
                         }
 
                         // 获取底面 4 个角坐标作为候选摆放点
-                        const candidatePositions = Packer.getEMSPositions(s, rw, rd);
+                        const candidatePositions = Packer.getEMSPositions(s, rw, rd, placed, maxCandidatePositions);
 
                         for (let pIdxCoord = 0; pIdxCoord < candidatePositions.length; pIdxCoord++) {
                             const pos = candidatePositions[pIdxCoord];
@@ -614,7 +660,7 @@ class Packer {
                                 continue;
                             }
 
-                            const candidatePositions = Packer.getEMSPositions(s, rw, rd);
+                            const candidatePositions = Packer.getEMSPositions(s, rw, rd, placed, maxCandidatePositions);
 
                             for (let pIdxCoord = 0; pIdxCoord < candidatePositions.length; pIdxCoord++) {
                                 const pos = candidatePositions[pIdxCoord];
