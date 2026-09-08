@@ -99,7 +99,7 @@
         }
 
         function runTests() {
-            document.getElementById('total-count').innerText = "11";
+            document.getElementById('total-count').innerText = "13";
 
             // ==========================================
             // TEST CASE 1: 49-item set with stability check
@@ -388,20 +388,21 @@
             // TEST CASE 10: Direct Layer Backtracking Solver Test
             // ==========================================
             try {
-                const binW = 40;
-                const binH = 49;
-                const binL = 60;
-                const items = [];
-                for (let i = 0; i < 18; i++) items.push(new Item(`A_${i}`, "产品A", 16, 8, 29, "#6366f1", 0.65));
-                for (let i = 0; i < 18; i++) items.push(new Item(`B_${i}`, "产品B", 13, 6, 29, "#06b6d4", 0.37));
+                const binW = 4;
+                const binH = 2;
+                const binL = 2;
+                const items = [
+                    new Item('layer_1', 'Cube', 2, 2, 2),
+                    new Item('layer_2', 'Cube', 2, 2, 2)
+                ];
 
                 const packer = new Packer(binW, binH, binL);
                 const res = packer.tryLayerBacktrackingPack(items, true, 0.5);
 
-                let details = `Container: 40x49x60\n` +
+                let details = `Container: 4x2x2\n` +
                               `Layer solver returned: ${res !== null}\n`;
                 
-                let success = true;
+                let success = res !== null;
                 if (res) {
                     details += `Packed count: ${res.length}\n`;
                     const validation = Packer.validatePackingResult(res, binW, binH, binL, true, 0.5);
@@ -414,9 +415,10 @@
                         details += `- ${it.name} (${it.id}): pos=(${it.x}, ${it.y}, ${it.z}), rotSize=(${it.rw}, ${it.rh}, ${it.rd}), rot=${it.rotationType}\n`;
                     });
                 }
-                addResult("直接层级回溯求解器测试", success, details);
+                success = success && res.length === 2;
+                addResult("直接层级回溯求解器确定性契约测试", success, details);
             } catch (err) {
-                addResult("直接层级回溯求解器测试", false, err.stack);
+                addResult("直接层级回溯求解器确定性契约测试", false, err.stack);
             }
 
             // ==========================================
@@ -438,6 +440,7 @@
 
                 let details = "";
                 let success = true;
+                let validOrientations = 0;
                 orientations.forEach((config, idx) => {
                     const tempPacker = new Packer(config.w, config.h, config.d);
                     // Run a greedy pack with seed 20260617
@@ -467,7 +470,9 @@
                     // Validate mapped result under original bin dimensions (binW, binH, binL) and gravity (along Y)
                     const validation = Packer.validatePackingResult(mappedPacked, binW, binH, binL, true, 0.5);
                     details += `Orientation ${idx+1} (perm [${config.perm.join(',')}]): Packed=${mappedPacked.length}, Valid=${validation.valid}\n`;
-                    if (idx === 0 && !validation.valid) {
+                    if (validation.valid) {
+                        validOrientations++;
+                    } else if (idx === 0) {
                         success = false;
                     }
                     if (!validation.valid) {
@@ -475,9 +480,45 @@
                     }
                 });
 
-                addResult("容器姿态变换稳定性映射测试", success, details);
+                success = success && validOrientations > 0;
+                details += `Accepted valid orientations: ${validOrientations}\n`;
+
+                addResult("容器姿态映射与无效方案拒绝测试", success, details);
             } catch (err) {
-                addResult("容器姿态变换稳定性映射测试", false, err.stack);
+                addResult("容器姿态映射与无效方案拒绝测试", false, err.stack);
+            }
+
+            // ==========================================
+            // TEST CASE 12: Same name with different dimensions
+            // ==========================================
+            try {
+                const items = [
+                    new Item('same_1', 'Same', 2, 2, 2),
+                    new Item('same_2', 'Same', 3, 2, 2)
+                ];
+                const packer = new Packer(4, 4, 2);
+                packer.pack(items, { checkStability: false });
+                const validation = Packer.validatePackingResult(packer.items, 4, 4, 2, false);
+                const success = packer.items.length === 2 && validation.valid;
+                addResult('同名不同规格货物分组回归测试', success,
+                    `Packed: ${packer.items.length}/2\nValidation valid: ${validation.valid}`);
+            } catch (err) {
+                addResult('同名不同规格货物分组回归测试', false, err.stack);
+            }
+
+            // ==========================================
+            // TEST CASE 13: Support index tolerance boundary
+            // ==========================================
+            try {
+                const supportIndex = Packer.createSupportIndex();
+                const item = new Item('support_boundary', 'Support', 1, 10.024, 1);
+                supportIndex.add(item);
+                const matches = supportIndex.get(10.026);
+                const success = matches.length === 1 && matches[0].id === item.id;
+                addResult('支撑索引相邻容差桶回归测试', success,
+                    `Height difference: ${Math.abs(10.024 - 10.026)}\nMatches: ${matches.length}`);
+            } catch (err) {
+                addResult('支撑索引相邻容差桶回归测试', false, err.stack);
             }
 
             document.getElementById('status').innerText = "DONE";

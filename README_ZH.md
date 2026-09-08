@@ -2,7 +2,7 @@
 
 简体中文 | [English](README.md)
 
-这是一个基于 Three.js 和多核并行 Web Workers 的高性能、响应式 3D 智能装箱排布与可视化系统。系统采用 100% 纯前端架构，支持离线运行，并完美兼容 GitHub Pages 静态托管发布。
+这是一个基于 Three.js 和多核并行 Web Workers 的高性能、响应式 3D 智能装箱排布与可视化系统。系统采用 100% 纯前端架构，运行依赖已经固定并保存在仓库中，支持真正离线运行，也兼容 GitHub Pages 静态托管发布。
 
 ---
 
@@ -40,6 +40,9 @@
 * `packer.js`: 核心算法模块（包含 `Item`、`Packer` 及 2D 回溯求解器）。
 * `app.js`: 应用程序控制器（负责 Three.js WebGL 场景生命周期、UI 事件以及 Web Worker 线程分发）。
 * `test_suite.html`: 集成测试运行页面，可直接在浏览器端对算法执行自动测试。
+* `tests/`: 可在 Node.js 中运行的装箱算法回归测试。
+* `vendor/`: 离线运行所需的固定版本 Three.js 与控制器。
+* `.github/workflows/test.yml`: 自动语法检查与算法测试工作流。
 
 ---
 
@@ -54,7 +57,12 @@ cd 3d-packing-simulator
 ```
 
 ### 运行集成测试
-在浏览器中打开 `test_suite.html` 即可自动执行算法正确性及极限测试。
+在浏览器中打开 `test_suite.html` 可执行可视化测试，也可以使用 Node.js 20+ 运行适合 CI 的回归测试：
+
+```bash
+npm test
+npm run check
+```
 
 ---
 

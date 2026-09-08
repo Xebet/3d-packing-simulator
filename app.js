@@ -5,6 +5,37 @@ let scene, camera, renderer, orbitControls, transformControls;
 let containerMesh, containerEdges;
 let shadowPlane; // 接收阴影的底板
 let gridHelper, axesHelper;
+let renderRequested = true;
+let lastBinDimensions = null;
+let lastFocusedElement = null;
+
+const MAX_INVENTORY_QTY = 1000;
+const MAX_ITEM_NAME_LENGTH = 80;
+const WORKER_TIMEOUT_MS = 60000;
+
+function requestRender() {
+    renderRequested = true;
+}
+
+function escapeHtml(value) {
+    return String(value).replace(/[&<>'"]/g, char => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        "'": '&#39;',
+        '"': '&quot;'
+    })[char]);
+}
+
+function readNumericInput(id, { min = -Infinity, max = Infinity, integer = false } = {}) {
+    const input = document.getElementById(id);
+    const raw = input.value.trim();
+    const value = Number(raw);
+    if (raw === '' || !Number.isFinite(value) || value < min || value > max || (integer && !Number.isInteger(value))) {
+        throw new RangeError(`${input.closest('.input-field')?.querySelector('label')?.textContent || id} 必须在 ${min} 到 ${max} 之间`);
+    }
+    return value;
+}
 
 // 货物数据结构
 // 预设产品清单 (v2.0 优化修改)
@@ -41,15 +72,9 @@ function disposeMesh(mesh) {
         if (child.geometry) child.geometry.dispose();
         if (child.material) {
             if (Array.isArray(child.material)) {
-                child.material.forEach(m => {
-                    if (m && ![...materialCache.values()].includes(m)) {
-                        m.dispose();
-                    }
-                });
+                child.material.forEach(m => m?.dispose());
             } else {
-                if (![...materialCache.values()].includes(child.material)) {
-                    child.material.dispose();
-                }
+                child.material.dispose();
             }
         }
     });
@@ -87,6 +112,7 @@ function init3DScene() {
     orbitControls.maxPolarAngle = Math.PI / 2 - 0.05; // 限制相机不能穿入地下
     orbitControls.minDistance = 20;
     orbitControls.maxDistance = 300;
+    orbitControls.addEventListener('change', requestRender);
 
     // E. 拖拽变换器 (TransformControls)
     transformControls = new THREE.TransformControls(camera, renderer.domElement);
@@ -191,8 +217,11 @@ function init3DScene() {
 
 function animateLoop() {
     requestAnimationFrame(animateLoop);
-    orbitControls.update();
-    renderer.render(scene, camera);
+    const controlsChanged = orbitControls.update();
+    if (controlsChanged || renderRequested) {
+        renderer.render(scene, camera);
+        renderRequested = false;
+    }
 }
 
 function onWindowResize() {
@@ -202,15 +231,26 @@ function onWindowResize() {
     camera.aspect = width / height;
     camera.updateProjectionMatrix();
     renderer.setSize(width, height);
+    requestRender();
 }
 
 // ==========================================
 // 3. 动态更新/创建容器 (Bin) 3D 模型
 // ==========================================
 function updateContainer3D() {
-    const l = parseFloat(document.getElementById('bin-l').value) || 60;
-    const w = parseFloat(document.getElementById('bin-w').value) || 40;
-    const h = parseFloat(document.getElementById('bin-h').value) || 50;
+    let l, w, h;
+    try {
+        l = readNumericInput('bin-l', { min: 5, max: 500 });
+        w = readNumericInput('bin-w', { min: 5, max: 500 });
+        h = readNumericInput('bin-h', { min: 5, max: 500 });
+    } catch (error) {
+        showWarningModal('error', '容器参数无效', error.message, '请输入有效的正数尺寸。');
+        return;
+    }
+
+    const dimensionsChanged = lastBinDimensions &&
+        (lastBinDimensions.l !== l || lastBinDimensions.w !== w || lastBinDimensions.h !== h);
+    lastBinDimensions = { l, w, h };
 
     // 清理旧容器
     if (containerMesh) {
@@ -260,9 +300,29 @@ function updateContainer3D() {
 
     // 如果处于手动模式，重置滑块的最大值
     updateManualSliderBounds();
+
+    if (dimensionsChanged) {
+        if (activeMode === 'auto' && (autoPackedItems.length > 0 || autoUnpackedItems.length > 0)) {
+            stopAnimation();
+            clearRenderedBoxes();
+            autoPackedItems = [];
+            autoUnpackedItems = [];
+            animationStep = 0;
+            document.getElementById('anim-section').style.display = 'none';
+        } else if (activeMode === 'manual' && placedItems.length > 0) {
+            placedItems.forEach(item => {
+                clampItemPosition(item);
+                const mesh = renderedItemMeshes.get(item.id);
+                if (mesh) updateMeshPosition(mesh, item);
+            });
+            if (selectedPlacedItem) checkManualPlacementCollisions();
+            renderPlacedItemsListUI();
+        }
+    }
     
     // 更新数据统计里容器的总容积
     updateStats();
+    requestRender();
 }
 
 // ==========================================
@@ -275,18 +335,19 @@ function renderInventoryUI() {
     inventory.forEach((item, index) => {
         const div = document.createElement('div');
         div.className = 'inventory-item';
+        const safeName = escapeHtml(item.name);
         div.innerHTML = `
             <div class="item-meta" style="flex: 1; min-width: 0;">
                 <div class="item-color-indicator" style="background-color: ${item.color};"></div>
                 <div class="item-details" style="min-width: 0; flex: 1;">
-                    <span class="item-name" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block;" title="${item.name}">${item.name}</span>
+                    <span class="item-name" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block;" title="${safeName}">${safeName}</span>
                     <span class="item-dims" style="font-size: 0.7rem; display: block;">${item.l}x${item.w}x${item.h}cm | ${item.weight}kg | 配比:${item.ratio} | 最少:${item.minQty}</span>
                 </div>
             </div>
             <div style="display: flex; align-items: center; gap: 0.4rem; flex-shrink: 0;">
                 <div class="item-qty-selector">
                     <button class="qty-btn dec-btn" data-index="${index}">-</button>
-                    <input type="number" class="qty-input" data-index="${index}" value="${item.qty}" min="1">
+                    <input type="number" class="qty-input" data-index="${index}" value="${item.qty}" min="0" max="${MAX_INVENTORY_QTY}">
                     <button class="qty-btn inc-btn" data-index="${index}">+</button>
                 </div>
                 ${activeMode === 'manual' ? `
@@ -306,7 +367,7 @@ function renderInventoryUI() {
     document.querySelectorAll('.dec-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
             const idx = parseInt(e.target.getAttribute('data-index'));
-            if (inventory[idx].qty > 1) {
+            if (inventory[idx].qty > 0) {
                 inventory[idx].qty--;
                 renderInventoryUI();
                 updateStats();
@@ -318,7 +379,7 @@ function renderInventoryUI() {
     document.querySelectorAll('.inc-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
             const idx = parseInt(e.target.getAttribute('data-index'));
-            inventory[idx].qty++;
+            inventory[idx].qty = Math.min(MAX_INVENTORY_QTY, inventory[idx].qty + 1);
             renderInventoryUI();
             updateStats();
         });
@@ -329,9 +390,8 @@ function renderInventoryUI() {
         input.addEventListener('change', (e) => {
             const idx = parseInt(e.target.getAttribute('data-index'));
             let val = parseInt(e.target.value);
-            if (isNaN(val) || val < 1) {
-                val = 1;
-            }
+            if (isNaN(val) || val < 0) val = 0;
+            val = Math.min(MAX_INVENTORY_QTY, val);
             inventory[idx].qty = val;
             renderInventoryUI();
             updateStats();
@@ -363,17 +423,26 @@ function renderInventoryUI() {
 
 // 添加新产品到库存清单
 document.getElementById('add-item-btn').addEventListener('click', () => {
-    const name = document.getElementById('item-name').value.trim() || '盒子';
-    const l = parseFloat(document.getElementById('item-l').value) || 10;
-    const w = parseFloat(document.getElementById('item-w').value) || 10;
-    const h = parseFloat(document.getElementById('item-h').value) || 10;
-    const qty = parseInt(document.getElementById('item-qty').value) || 1;
-    const color = document.getElementById('item-color').value;
-    const weight = parseFloat(document.getElementById('item-weight').value) || 0.0;
-    const ratio = parseInt(document.getElementById('item-ratio').value) || 0;
-    const minQty = parseInt(document.getElementById('item-min-qty').value) || 0;
+    let name, l, w, h, qty, color, weight, ratio, minQty;
+    try {
+        name = document.getElementById('item-name').value.trim() || '盒子';
+        if (name.length > MAX_ITEM_NAME_LENGTH) {
+            throw new RangeError(`产品名称不能超过 ${MAX_ITEM_NAME_LENGTH} 个字符`);
+        }
+        l = readNumericInput('item-l', { min: 0.01, max: 500 });
+        w = readNumericInput('item-w', { min: 0.01, max: 500 });
+        h = readNumericInput('item-h', { min: 0.01, max: 500 });
+        qty = readNumericInput('item-qty', { min: 1, max: MAX_INVENTORY_QTY, integer: true });
+        color = document.getElementById('item-color').value;
+        weight = readNumericInput('item-weight', { min: 0, max: 100000 });
+        ratio = readNumericInput('item-ratio', { min: 0, max: 100000, integer: true });
+        minQty = readNumericInput('item-min-qty', { min: 0, max: MAX_INVENTORY_QTY, integer: true });
+    } catch (error) {
+        showWarningModal('error', '产品参数无效', error.message, '请检查尺寸、重量和数量后重试。');
+        return;
+    }
 
-    const id = 'item_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
+    const id = `item_${crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`}`;
     inventory.push({ id, name, l, w, h, qty, color, weight, ratio, minQty });
     renderInventoryUI();
     updateStats();
@@ -395,15 +464,17 @@ function createBoxMesh(item) {
     // item.rw, item.rh, item.rd 已经在装箱时确定（由于旋转）
     const geometry = new THREE.BoxGeometry(item.rw, item.rh, item.rd);
     
-    let material = materialCache.get(item.color);
-    if (!material) {
-        material = new THREE.MeshStandardMaterial({
+    let baseMaterial = materialCache.get(item.color);
+    if (!baseMaterial) {
+        baseMaterial = new THREE.MeshStandardMaterial({
             color: new THREE.Color(item.color),
             roughness: 0.4,
             metalness: 0.1
         });
-        materialCache.set(item.color, material);
+        materialCache.set(item.color, baseMaterial);
     }
+    // 可交互盒子的颜色/透明度会独立变化，因此不能直接共享可变材质实例。
+    const material = baseMaterial.clone();
 
     const mesh = new THREE.Mesh(geometry, material);
     mesh.castShadow = true;
@@ -444,6 +515,7 @@ function clearRenderedBoxes() {
     renderedItemMeshes.clear();
     if (transformControls) transformControls.detach();
     removeSelectionHelper();
+    requestRender();
 }
 
 // ==========================================
@@ -584,6 +656,7 @@ function runSinglePacking(itemsToPack, binW, binH, binL, checkStability, support
     const numCores = navigator.hardwareConcurrency || 4;
     const M = Math.max(1, Math.min(numCores, 8)); // 并发数限制在 1-8 之间
     const workers = [];
+    const workerTimers = new Map();
     let completedWorkers = 0;
     let finished = false;
 
@@ -593,6 +666,8 @@ function runSinglePacking(itemsToPack, binW, binH, binL, checkStability, support
 
     const cleanup = () => {
         finished = true;
+        workerTimers.forEach(timer => clearTimeout(timer));
+        workerTimers.clear();
         workers.forEach(w => w.terminate());
     };
 
@@ -636,15 +711,20 @@ function runSinglePacking(itemsToPack, binW, binH, binL, checkStability, support
             } else {
                 w2d = item.h; h2d = item.d;
             }
-            return { name: item.name, w2d, h2d };
+            return {
+                key: `${item.w}|${item.h}|${item.d}`,
+                name: item.name,
+                w2d,
+                h2d
+            };
         });
 
         const itemTypes = [];
         const typeMap = new Map();
         for (const item of items2D) {
-            const key = item.name;
+            const key = item.key;
             if (!typeMap.has(key)) {
-                typeMap.set(key, { name: item.name, w2d: item.w2d, h2d: item.h2d, qty: 0 });
+                typeMap.set(key, { key, name: item.name, w2d: item.w2d, h2d: item.h2d, qty: 0 });
                 itemTypes.push(typeMap.get(key));
             }
             typeMap.get(key).qty++;
@@ -664,10 +744,15 @@ function runSinglePacking(itemsToPack, binW, binH, binL, checkStability, support
 
                 const worker = createPackingWorker();
                 workers.push(worker);
+                let settled = false;
 
-                worker.onerror = function(err) {
-                    console.error("Worker error in layerPack:", err);
-                    if (finished) return;
+                const failLayerWorker = (error) => {
+                    if (settled || finished) return;
+                    settled = true;
+                    clearTimeout(workerTimers.get(worker));
+                    workerTimers.delete(worker);
+                    worker.terminate();
+                    console.error("Worker error in layerPack:", error);
                     partitionsFailed += (end - start);
                     completedWorkers++;
                     if (completedWorkers === workers.length) {
@@ -675,19 +760,46 @@ function runSinglePacking(itemsToPack, binW, binH, binL, checkStability, support
                     }
                 };
 
+                workerTimers.set(worker, setTimeout(() => {
+                    failLayerWorker(new Error(`layerPack timed out after ${WORKER_TIMEOUT_MS}ms`));
+                }, WORKER_TIMEOUT_MS));
+
+                worker.onerror = function(err) {
+                    failLayerWorker(err);
+                };
+
                 worker.onmessage = function(e) {
-                    if (finished) return;
+                    if (settled || finished) return;
+                    settled = true;
+                    clearTimeout(workerTimers.get(worker));
+                    workerTimers.delete(worker);
                     if (e.data.status === 'success') {
-                        cleanup();
-                        const progress = baseProgress + weight;
-                        if (progressBar) progressBar.style.width = `${progress}%`;
-                        
                         const packed = e.data.items.map(it => {
                             const item = new Item(it.id, it.name, it.w, it.h, it.d, it.color, it.weight);
                             item.x = it.x; item.y = it.y; item.z = it.z;
                             item.setRotation(it.rotationType);
                             return item;
                         });
+
+                        const validation = Packer.validatePackingResult(
+                            packed,
+                            binW,
+                            binH,
+                            binL,
+                            checkStability,
+                            supportRatio
+                        );
+                        if (!validation.valid) {
+                            console.warn('Invalid layerPack result discarded:', validation.errors);
+                            partitionsFailed += (end - start);
+                            completedWorkers++;
+                            if (completedWorkers === workers.length) runGreedyParallel();
+                            return;
+                        }
+
+                        cleanup();
+                        const progress = baseProgress + weight;
+                        if (progressBar) progressBar.style.width = `${progress}%`;
                         callback(packed, []);
                     } else {
                         if (e.data.status === 'error') {
@@ -709,7 +821,7 @@ function runSinglePacking(itemsToPack, binW, binH, binL, checkStability, support
                     type: 'tryLayerPack',
                     itemsData: itemsSerialized,
                     binW, binH, binD: binL,
-                    options: { checkStability, supportRatio, seed: 20260617, maxSpaces: 200 },
+                    options: { checkStability, supportRatio, biggerFirst, seed: 20260617, maxSpaces: 200 },
                     partitionsRange: [start, end]
                 });
             }
@@ -722,6 +834,8 @@ function runSinglePacking(itemsToPack, binW, binH, binL, checkStability, support
     function runGreedyParallel() {
         if (finished) return;
         workers.forEach(w => w.terminate());
+        workerTimers.forEach(timer => clearTimeout(timer));
+        workerTimers.clear();
         workers.length = 0;
         completedWorkers = 0;
 
@@ -730,6 +844,24 @@ function runSinglePacking(itemsToPack, binW, binH, binL, checkStability, support
         const step = Math.ceil(numTrials / M);
         const greedyResults = [];
 
+        const finalizeGreedyResults = () => {
+            cleanup();
+            let best = { items: [], unpacked: itemsSerialized, score: -Infinity };
+            greedyResults.forEach(res => {
+                if (res.score > best.score) best = res;
+            });
+            const packed = best.items.map(it => {
+                const item = new Item(it.id, it.name, it.w, it.h, it.d, it.color, it.weight);
+                item.x = it.x; item.y = it.y; item.z = it.z;
+                item.setRotation(it.rotationType);
+                return item;
+            });
+            const unpacked = best.unpacked.map(it => {
+                return new Item(it.id, it.name, it.w, it.h, it.d, it.color, it.weight);
+            });
+            callback(packed, unpacked);
+        };
+
         for (let i = 0; i < M; i++) {
             const start = i * step;
             const count = Math.min(numTrials - start, step);
@@ -737,68 +869,43 @@ function runSinglePacking(itemsToPack, binW, binH, binL, checkStability, support
 
             const worker = createPackingWorker();
             workers.push(worker);
+            let settled = false;
+
+            const finishGreedyWorker = (result, error) => {
+                if (settled || finished) return;
+                settled = true;
+                clearTimeout(workerTimers.get(worker));
+                workerTimers.delete(worker);
+                if (error) console.error("Worker error in greedyPack:", error);
+                if (result) greedyResults.push(result);
+                completedWorkers++;
+                if (completedWorkers === workers.length) finalizeGreedyResults();
+            };
+
+            workerTimers.set(worker, setTimeout(() => {
+                worker.terminate();
+                finishGreedyWorker(null, new Error(`greedyPack timed out after ${WORKER_TIMEOUT_MS}ms`));
+            }, WORKER_TIMEOUT_MS));
 
             worker.onerror = function(err) {
-                console.error("Worker error in greedyPack:", err);
-                if (finished) return;
-                completedWorkers++;
-                if (completedWorkers === workers.length) {
-                    cleanup();
-                    let best = { items: [], unpacked: [], score: -Infinity };
-                    greedyResults.forEach(res => {
-                        if (res.score > best.score) {
-                            best = res;
-                        }
-                    });
-                    const packed = best.items.map(it => {
-                        const item = new Item(it.id, it.name, it.w, it.h, it.d, it.color, it.weight);
-                        item.x = it.x; item.y = it.y; item.z = it.z;
-                        item.setRotation(it.rotationType);
-                        return item;
-                    });
-                    const unpacked = best.unpacked.map(it => {
-                        return new Item(it.id, it.name, it.w, it.h, it.d, it.color, it.weight);
-                    });
-                    callback(packed, unpacked);
-                }
+                finishGreedyWorker(null, err);
             };
 
             worker.onmessage = function(e) {
-                if (finished) return;
-                completedWorkers++;
+                if (settled || finished) return;
                 
                 const stepBase = hasCommonDim ? 40 : 0;
                 const stepWeight = hasCommonDim ? 60 : 100;
-                const stepProgress = stepBase + Math.floor((completedWorkers / workers.length) * stepWeight);
+                const stepProgress = stepBase + Math.floor(((completedWorkers + 1) / workers.length) * stepWeight);
                 const progress = baseProgress + Math.floor((stepProgress / 100) * weight);
                 if (progressBar) progressBar.style.width = `${progress}%`;
 
                 if (e.data.status === 'success') {
-                    greedyResults.push(e.data.result);
+                    finishGreedyWorker(e.data.result, null);
                 } else if (e.data.status === 'error') {
-                    console.error("Worker reported error in greedyPack:", e.data.error);
-                }
-
-                if (completedWorkers === workers.length) {
-                    cleanup();
-                    let best = { items: [], unpacked: [], score: -Infinity };
-                    greedyResults.forEach(res => {
-                        if (res.score > best.score) {
-                            best = res;
-                        }
-                    });
-
-                    const packed = best.items.map(it => {
-                        const item = new Item(it.id, it.name, it.w, it.h, it.d, it.color, it.weight);
-                        item.x = it.x; item.y = it.y; item.z = it.z;
-                        item.setRotation(it.rotationType);
-                        return item;
-                    });
-                    const unpacked = best.unpacked.map(it => {
-                        return new Item(it.id, it.name, it.w, it.h, it.d, it.color, it.weight);
-                    });
-
-                    callback(packed, unpacked);
+                    finishGreedyWorker(null, new Error(e.data.error));
+                } else {
+                    finishGreedyWorker(null, new Error('Unknown greedyPack worker response'));
                 }
             };
 
@@ -806,7 +913,7 @@ function runSinglePacking(itemsToPack, binW, binH, binL, checkStability, support
                 type: 'greedyPack',
                 itemsData: itemsSerialized,
                 binW, binH, binD: binL,
-                options: { checkStability, supportRatio, seed: 20260617, maxSpaces: 200 },
+                options: { checkStability, supportRatio, biggerFirst, seed: 20260617, maxSpaces: 200 },
                 startTrial: start,
                 numTrials: count
             });
@@ -937,9 +1044,15 @@ document.getElementById('run-pack-btn').addEventListener('click', () => {
     
     stopAnimation();
 
-    const binL = parseFloat(document.getElementById('bin-l').value);
-    const binW = parseFloat(document.getElementById('bin-w').value);
-    const binH = parseFloat(document.getElementById('bin-h').value);
+    let binL, binW, binH;
+    try {
+        binL = readNumericInput('bin-l', { min: 5, max: 500 });
+        binW = readNumericInput('bin-w', { min: 5, max: 500 });
+        binH = readNumericInput('bin-h', { min: 5, max: 500 });
+    } catch (error) {
+        showWarningModal('error', '容器参数无效', error.message, '请修正容器尺寸后重试。');
+        return;
+    }
 
     // 1. 预先校验：是否有单个产品尺寸在任何旋转方向下都超出了箱子的尺寸
     let oversizedItems = [];
@@ -961,7 +1074,7 @@ document.getElementById('run-pack-btn').addEventListener('click', () => {
     if (oversizedItems.length > 0) {
         // 展示超大尺寸错误弹窗
         const listHtml = oversizedItems.map(inv => 
-            `<li class="modal-bullet-item">❌ ${inv.name}: 尺寸 ${inv.w}x${inv.h}x${inv.l} cm (宽x高x长)</li>`
+            `<li class="modal-bullet-item">❌ ${escapeHtml(inv.name)}: 尺寸 ${inv.w}x${inv.h}x${inv.l} cm (宽x高x长)</li>`
         ).join('');
         
         showWarningModal(
@@ -1008,7 +1121,7 @@ document.getElementById('run-pack-btn').addEventListener('click', () => {
             });
 
             const listHtml = Array.from(unpackedCountMap.entries()).map(([name, count]) => 
-                `<li class="modal-bullet-item">⚠️ ${name}: 未能装入 ${count} 件</li>`
+                `<li class="modal-bullet-item">⚠️ ${escapeHtml(name)}: 未能装入 ${count} 件</li>`
             ).join('');
 
             showWarningModal(
@@ -1079,8 +1192,10 @@ function showWarningModal(type, title, message, suggestion, listHtml = '') {
     
     bodyEl.innerHTML = contentHtml;
 
-    // 显示弹窗
+    // 显示弹窗并把键盘焦点移入对话框。
+    lastFocusedElement = document.activeElement;
     modal.style.display = 'flex';
+    requestAnimationFrame(() => document.getElementById('modal-close-btn')?.focus());
 }
 
 // 分步显示装箱物体数
@@ -1104,6 +1219,7 @@ function showStep(stepCount) {
             }
         }
     }
+    requestRender();
 }
 
 // 动画播放器核心逻辑
@@ -1191,9 +1307,23 @@ function manuallyPlaceItem(invItem) {
     const binW = parseFloat(document.getElementById('bin-w').value);
     const binH = parseFloat(document.getElementById('bin-h').value);
 
-    const id = 'manual_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
+    const id = `manual_${crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`}`;
     // 实例化一个未放置在任何角点的 Item
     const item = new Item(id, invItem.name, invItem.w, invItem.h, invItem.l, invItem.color, invItem.weight);
+
+    const fittingRotation = Packer.getUniqueOrientations(item).find(rotation =>
+        rotation.rw <= binW && rotation.rh <= binH && rotation.rd <= binL
+    );
+    if (!fittingRotation) {
+        showWarningModal(
+            'error',
+            '产品尺寸超出容器',
+            `${escapeHtml(invItem.name)} 在所有旋转方向下都无法放入当前容器。`,
+            '请增大容器或调整产品尺寸。'
+        );
+        return;
+    }
+    item.setRotation(fittingRotation.rotationType);
     
     // 给定一个安全的初始掉落点 (x=0, z=0)，利用重力模拟找到合适的高点落位
     item.x = 0;
@@ -1245,6 +1375,7 @@ function selectPlacedItemById(id) {
     selectedBoxMesh = renderedItemMeshes.get(id);
 
     if (selectedPlacedItem && selectedBoxMesh) {
+        const safeName = escapeHtml(selectedPlacedItem.name);
         // 绑定拖拽变换器 (gizmo)
         transformControls.attach(selectedBoxMesh);
 
@@ -1256,7 +1387,7 @@ function selectPlacedItemById(id) {
         document.getElementById('manual-status').innerHTML = `
             <div style="display: flex; align-items: center; gap: 0.5rem; font-weight: 600;">
                 <div style="width: 10px; height: 10px; border-radius: 50%; background-color: ${selectedPlacedItem.color};"></div>
-                <span>当前选中: ${selectedPlacedItem.name}</span>
+                <span>当前选中: ${safeName}</span>
             </div>
             <div style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 0.2rem;">
                 规格: ${selectedPlacedItem.w}x${selectedPlacedItem.h}x${selectedPlacedItem.d} cm (宽x高x深)
@@ -1443,7 +1574,12 @@ document.getElementById('btn-gravity-drop').addEventListener('click', () => {
     if (!selectedPlacedItem || !selectedBoxMesh) return;
 
     const binH = parseFloat(document.getElementById('bin-h').value);
-    const landingY = Packer.getGravityDropY(selectedPlacedItem, placedItems, binH);
+    const landingY = Packer.getGravityDropY(
+        selectedPlacedItem,
+        placedItems,
+        binH,
+        { maxLandingY: selectedPlacedItem.y }
+    );
 
     if (landingY !== null) {
         selectedPlacedItem.y = landingY;
@@ -1492,34 +1628,40 @@ function onGizmoDrag() {
 
 // 物理碰撞和超出边界高亮高阶检测
 function checkManualPlacementCollisions() {
-    let hasCollision = false;
+    if (!selectedPlacedItem) return;
 
-    // A. 容器边缘和极限超出判定
+    // 对全部手动物品做全局校验，避免切换选择后清除其他物品的碰撞状态。
     const binL = parseFloat(document.getElementById('bin-l').value);
     const binW = parseFloat(document.getElementById('bin-w').value);
     const binH = parseFloat(document.getElementById('bin-h').value);
+    const invalidIds = new Set();
 
-    // B. 遍历已放置盒子做碰撞检测
     for (const item of placedItems) {
-        if (item.id === selectedPlacedItem.id) continue;
-
-        const boxA = { x: selectedPlacedItem.x, y: selectedPlacedItem.y, z: selectedPlacedItem.z, w: selectedPlacedItem.rw, h: selectedPlacedItem.rh, d: selectedPlacedItem.rd };
-        const boxB = { x: item.x, y: item.y, z: item.z, w: item.rw, h: item.rh, d: item.rd };
-
-        if (boxesOverlap(boxA, boxB)) {
-            hasCollision = true;
-            updatePlacedBoxVisual(item, true);
-        } else {
-            updatePlacedBoxVisual(item, false);
+        if (item.x < 0 || item.y < 0 || item.z < 0 ||
+            item.x + item.rw > binW || item.y + item.rh > binH || item.z + item.rd > binL) {
+            invalidIds.add(item.id);
         }
     }
 
-    // C. 改变被操控的盒子为红色以作警告
-    updatePlacedBoxVisual(selectedPlacedItem, hasCollision);
+    // B. 遍历所有盒子对做碰撞检测
+    for (let i = 0; i < placedItems.length; i++) {
+        for (let j = i + 1; j < placedItems.length; j++) {
+            const itemA = placedItems[i];
+            const itemB = placedItems[j];
+            if (boxesOverlap(itemA, itemB)) {
+                invalidIds.add(itemA.id);
+                invalidIds.add(itemB.id);
+            }
+        }
+    }
+
+    for (const item of placedItems) {
+        updatePlacedBoxVisual(item, invalidIds.has(item.id));
+    }
 
     // D. 显示红色悬浮警报条
     const alertBanner = document.getElementById('collision-alert');
-    if (hasCollision) {
+    if (invalidIds.size > 0) {
         alertBanner.style.display = 'flex';
     } else {
         alertBanner.style.display = 'none';
@@ -1542,6 +1684,7 @@ function updatePlacedBoxVisual(item, isColliding) {
         mesh.material.opacity = 1.0;
         mesh.material.roughness = 0.4;
     }
+    requestRender();
 }
 
 // 渲染已摆放盒子列表 UI
@@ -1552,11 +1695,12 @@ function renderPlacedItemsListUI() {
     placedItems.forEach(item => {
         const div = document.createElement('div');
         const isSelected = selectedPlacedItem && selectedPlacedItem.id === item.id;
+        const safeName = escapeHtml(item.name);
         div.className = `manual-item-row ${isSelected ? 'selected' : ''}`;
         div.innerHTML = `
             <div style="display: flex; align-items: center; gap: 0.5rem;">
                 <div style="width: 8px; height: 8px; border-radius: 50%; background-color: ${item.color};"></div>
-                <span class="manual-item-name">${item.name}</span>
+                <span class="manual-item-name">${safeName}</span>
             </div>
             <span class="manual-item-coords">x:${Math.round(item.x)} y:${Math.round(item.y)} z:${Math.round(item.z)}</span>
         `;
@@ -1684,11 +1828,11 @@ function updateStats() {
     // 更新已装入明细
     const vLoadedDetails = document.getElementById('v-loaded-details');
     if (vLoadedDetails) {
-        const counts = {};
+        const counts = new Map();
         activeItems.forEach(item => {
-            counts[item.name] = (counts[item.name] || 0) + 1;
+            counts.set(item.name, (counts.get(item.name) || 0) + 1);
         });
-        const details = Object.entries(counts).map(([name, count]) => `${name}x${count}`).join(', ');
+        const details = Array.from(counts.entries()).map(([name, count]) => `${name}x${count}`).join(', ');
         vLoadedDetails.innerText = details || '暂无货物';
     }
 }
@@ -1732,11 +1876,20 @@ function syncThreeTheme() {
 // 8.6. 智能配载数量计算器 (v2.0)
 // ==========================================
 function solveCargoQuantities() {
-    const binL = parseFloat(document.getElementById('bin-l').value) || 60;
-    const binW = parseFloat(document.getElementById('bin-w').value) || 40;
-    const binH = parseFloat(document.getElementById('bin-h').value) || 50;
-    const binEmptyWeight = parseFloat(document.getElementById('bin-empty-weight').value) || 0;
-    const binMaxWeight = parseFloat(document.getElementById('bin-max-weight').value) || 50;
+    let binL, binW, binH, binEmptyWeight, binMaxWeight;
+    try {
+        binL = readNumericInput('bin-l', { min: 5, max: 500 });
+        binW = readNumericInput('bin-w', { min: 5, max: 500 });
+        binH = readNumericInput('bin-h', { min: 5, max: 500 });
+        binEmptyWeight = readNumericInput('bin-empty-weight', { min: 0, max: 100000 });
+        binMaxWeight = readNumericInput('bin-max-weight', { min: 0.01, max: 100000 });
+        if (binMaxWeight <= binEmptyWeight) {
+            throw new RangeError('承载上限必须大于箱子空重');
+        }
+    } catch (error) {
+        showWarningModal('error', '配载参数无效', error.message, '请修正容器重量和尺寸设置。');
+        return;
+    }
 
     const V_bin = binL * binW * binH;
     const maxVolumeLimit = 0.75 * V_bin; // 引入 75% 拼装安全容积余量
@@ -1933,6 +2086,7 @@ document.getElementById('view-toggle-grid').addEventListener('click', (e) => {
     while (btn.tagName !== 'BUTTON') btn = btn.parentElement;
 
     const active = btn.classList.toggle('active');
+    btn.setAttribute('aria-pressed', String(active));
     gridHelper.visible = active;
     axesHelper.visible = active;
     
@@ -1945,6 +2099,7 @@ document.getElementById('view-toggle-wireframe').addEventListener('click', (e) =
     while (btn.tagName !== 'BUTTON') btn = btn.parentElement;
 
     const active = btn.classList.toggle('active');
+    btn.setAttribute('aria-pressed', String(active));
     if (containerMesh) {
         if (active) {
             containerMesh.material.opacity = 0.0;
@@ -1992,6 +2147,7 @@ window.onload = () => {
     // E. 绑定弹窗关闭按钮
     document.getElementById('modal-close-btn').addEventListener('click', () => {
         document.getElementById('warning-modal').style.display = 'none';
+        lastFocusedElement?.focus();
     });
 
     // F. 绑定日夜间模式切换按钮 (v2.0)
@@ -2102,13 +2258,16 @@ window.onload = () => {
 
     if (aboutToggle && aboutModal) {
         aboutToggle.addEventListener('click', () => {
+            lastFocusedElement = document.activeElement;
             aboutModal.style.display = 'flex';
+            requestAnimationFrame(() => aboutCloseBtn?.focus());
         });
     }
 
     if (aboutCloseBtn && aboutModal) {
         aboutCloseBtn.addEventListener('click', () => {
             aboutModal.style.display = 'none';
+            lastFocusedElement?.focus();
         });
     }
 
@@ -2116,6 +2275,7 @@ window.onload = () => {
         aboutModal.addEventListener('click', (e) => {
             if (e.target === aboutModal) {
                 aboutModal.style.display = 'none';
+                lastFocusedElement?.focus();
             }
         });
     }
@@ -2137,7 +2297,7 @@ window.onload = () => {
 
     if (aboutGithubBtn) {
         aboutGithubBtn.addEventListener('click', () => {
-            window.open('https://github.com/Xebet/3d-packing-simulator', '_blank');
+            window.open('https://github.com/Xebet/3d-packing-simulator', '_blank', 'noopener,noreferrer');
         });
     }
 
@@ -2377,4 +2537,26 @@ window.onload = () => {
             startTour();
         }, 1200); // 1.2秒延迟，等待Three.js初始渲染就绪
     }
+
+    document.addEventListener('keydown', (event) => {
+        if (event.key !== 'Escape') return;
+        const warningModal = document.getElementById('warning-modal');
+        if (warningModal.style.display !== 'none') {
+            document.getElementById('modal-close-btn').click();
+        } else if (aboutModal?.style.display !== 'none') {
+            aboutCloseBtn?.click();
+        } else if (tourOverlay?.style.display !== 'none') {
+            endTour(false);
+        }
+    });
 };
+
+window.addEventListener('beforeunload', () => {
+    if (cachedWorkerBlobURL) {
+        URL.revokeObjectURL(cachedWorkerBlobURL);
+        cachedWorkerBlobURL = null;
+    }
+    materialCache.forEach(material => material.dispose());
+    materialCache.clear();
+    renderer?.dispose();
+});

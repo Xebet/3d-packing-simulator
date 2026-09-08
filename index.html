@@ -5,8 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>3D 智能装箱模拟器 & 交互式排布系统</title>
     <link rel="stylesheet" href="./style.css">
-    <link rel="preconnect" href="https://cdnjs.cloudflare.com">
-    <link rel="preconnect" href="https://cdn.jsdelivr.net">
     <meta name="description" content="免费在线 3D 智能装箱模拟器，支持多核并行计算、自动/手动双模式装箱、Three.js 实时 3D 渲染与碰撞检测。100% 离线可用，无需安装。">
     <meta name="keywords" content="3D装箱,bin packing,装箱模拟器,packing simulator,Three.js,Web Workers">
     <meta property="og:title" content="3D 智能装箱模拟器 & 交互式排布系统">
@@ -15,9 +13,9 @@
     <link rel="canonical" href="https://Xebet.github.io/3d-packing-simulator/">
     
     <!-- 加载非 ESM 版本的 Three.js 核心库及其经典控制器插件 -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js" defer></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js" defer></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/TransformControls.js" defer></script>
+    <script src="./vendor/three.min.js" defer></script>
+    <script src="./vendor/OrbitControls.js" defer></script>
+    <script src="./vendor/TransformControls.js" defer></script>
 </head>
 <body>
     <!-- 顶部标题栏 -->
@@ -64,21 +62,21 @@
                     </div>
                     <div class="input-row">
                         <div class="input-field">
-                            <label>长度 (L)</label>
+                            <label for="bin-l">长度 (L)</label>
                             <div class="input-wrapper">
                                 <input type="number" id="bin-l" value="60" min="5" max="500">
                                 <span class="input-unit">cm</span>
                             </div>
                         </div>
                         <div class="input-field">
-                            <label>宽度 (W)</label>
+                            <label for="bin-w">宽度 (W)</label>
                             <div class="input-wrapper">
                                 <input type="number" id="bin-w" value="40" min="5" max="500">
                                 <span class="input-unit">cm</span>
                             </div>
                         </div>
                         <div class="input-field">
-                            <label>高度 (H)</label>
+                            <label for="bin-h">高度 (H)</label>
                             <div class="input-wrapper">
                                 <input type="number" id="bin-h" value="50" min="5" max="500">
                                 <span class="input-unit">cm</span>
@@ -87,21 +85,21 @@
                     </div>
                     <div class="input-row">
                         <div class="input-field">
-                            <label>箱子空重</label>
+                            <label for="bin-empty-weight">箱子空重</label>
                             <div class="input-wrapper">
                                 <input type="number" id="bin-empty-weight" value="1.5" step="0.1" min="0">
                                 <span class="input-unit">kg</span>
                             </div>
                         </div>
                         <div class="input-field">
-                            <label>承载上限</label>
+                            <label for="bin-max-weight">承载上限</label>
                             <div class="input-wrapper">
                                 <input type="number" id="bin-max-weight" value="21.0" step="0.1" min="1">
                                 <span class="input-unit">kg</span>
                             </div>
                         </div>
                         <div class="input-field">
-                            <label>泡货系数</label>
+                            <label for="bin-divisor">泡货系数</label>
                             <div class="input-wrapper">
                                 <input type="number" id="bin-divisor" value="8000" min="1">
                             </div>
@@ -130,36 +128,36 @@
                     
                     <div class="input-row">
                         <div class="input-field" style="flex: 2;">
-                            <label>产品名称</label>
+                            <label for="item-name">产品名称</label>
                             <div class="input-wrapper">
-                                <input type="text" id="item-name" value="盒子A">
+                                <input type="text" id="item-name" value="盒子A" maxlength="80">
                             </div>
                         </div>
                         <div class="input-field">
-                            <label>颜色</label>
+                            <label for="item-color">颜色</label>
                             <input type="color" id="item-color" value="#6366f1" style="width: 100%; height: 32px; border: 1px solid var(--panel-border); border-radius: 8px; cursor: pointer; padding: 2px; background: transparent;">
                         </div>
                     </div>
 
                     <div class="input-row">
                         <div class="input-field">
-                            <label>长 (l)</label>
+                            <label for="item-l">长 (l)</label>
                             <div class="input-wrapper">
-                                <input type="number" id="item-l" value="15" min="1">
+                                <input type="number" id="item-l" value="15" min="0.01" max="500" step="0.01">
                                 <span class="input-unit">cm</span>
                             </div>
                         </div>
                         <div class="input-field">
-                            <label>宽 (w)</label>
+                            <label for="item-w">宽 (w)</label>
                             <div class="input-wrapper">
-                                <input type="number" id="item-w" value="10" min="1">
+                                <input type="number" id="item-w" value="10" min="0.01" max="500" step="0.01">
                                 <span class="input-unit">cm</span>
                             </div>
                         </div>
                         <div class="input-field">
-                            <label>高 (h)</label>
+                            <label for="item-h">高 (h)</label>
                             <div class="input-wrapper">
-                                <input type="number" id="item-h" value="12" min="1">
+                                <input type="number" id="item-h" value="12" min="0.01" max="500" step="0.01">
                                 <span class="input-unit">cm</span>
                             </div>
                         </div>
@@ -167,22 +165,22 @@
 
                     <div class="input-row">
                         <div class="input-field">
-                            <label>单重</label>
+                            <label for="item-weight">单重</label>
                             <div class="input-wrapper">
-                                <input type="number" id="item-weight" value="1.5" step="0.1" min="0">
+                                <input type="number" id="item-weight" value="1.5" step="0.1" min="0" max="100000">
                                 <span class="input-unit">kg</span>
                             </div>
                         </div>
                         <div class="input-field">
-                            <label>装箱配比</label>
+                            <label for="item-ratio">装箱配比</label>
                             <div class="input-wrapper">
-                                <input type="number" id="item-ratio" value="0" min="0">
+                                <input type="number" id="item-ratio" value="0" min="0" max="100000" step="1">
                             </div>
                         </div>
                         <div class="input-field">
-                            <label>最少数量</label>
+                            <label for="item-min-qty">最少数量</label>
                             <div class="input-wrapper">
-                                <input type="number" id="item-min-qty" value="0" min="0">
+                                <input type="number" id="item-min-qty" value="0" min="0" max="1000" step="1">
                                 <span class="input-unit">个</span>
                             </div>
                         </div>
@@ -190,9 +188,9 @@
 
                     <div class="input-row">
                         <div class="input-field" id="qty-field">
-                            <label>数量 (Qty)</label>
+                            <label for="item-qty">数量 (Qty)</label>
                             <div class="input-wrapper">
-                                <input type="number" id="item-qty" value="8" min="1">
+                                <input type="number" id="item-qty" value="8" min="1" max="1000" step="1">
                                 <span class="input-unit">个</span>
                             </div>
                         </div>
@@ -412,18 +410,18 @@
             <!-- 视口操作浮动工具栏 -->
             <div class="viewport-toolbar">
                 <div class="toolbar-group">
-                    <button id="view-reset-camera" class="toolbar-btn" title="复位摄像机视角">
+                    <button id="view-reset-camera" class="toolbar-btn" title="复位摄像机视角" aria-label="复位摄像机视角">
                         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="M12 8l-4 4 4 4M16 12H8"></path></svg>
                     </button>
                 </div>
                 
                 <div class="toolbar-group">
                     <!-- 网格开关 -->
-                    <button id="view-toggle-grid" class="toolbar-btn active" title="显示地面网格/轴向">
+                    <button id="view-toggle-grid" class="toolbar-btn active" title="显示地面网格/轴向" aria-label="显示或隐藏地面网格与轴向" aria-pressed="true">
                         <svg viewBox="0 0 24 24"><path d="M3 3h18v18H3V3z"></path><path d="M21 9H3M21 15H3M12 3v18"></path></svg>
                     </button>
                     <!-- 实体线框切换 -->
-                    <button id="view-toggle-wireframe" class="toolbar-btn" title="容器线框模式切换">
+                    <button id="view-toggle-wireframe" class="toolbar-btn" title="容器线框模式切换" aria-label="切换容器线框模式" aria-pressed="false">
                         <svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
                     </button>
                     <!-- 透明度调节 -->
@@ -438,7 +436,7 @@
             <div id="canvas-container"></div>
 
             <!-- 碰撞悬浮警示条 -->
-            <div id="collision-alert" class="alert-banner" style="display: none;">
+            <div id="collision-alert" class="alert-banner" style="display: none;" role="status" aria-live="polite">
                 <svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
                 <div class="alert-banner-text">检测到碰撞或溢出容器！放置无效</div>
             </div>

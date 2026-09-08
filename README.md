@@ -2,7 +2,7 @@
 
 [简体中文](README_ZH.md) | English
 
-A high-performance, responsive 3D bin packing visualization system built using Three.js and parallel multi-core Web Workers. It runs 100% client-side, offline, and is ready for cloud deployment via GitHub Pages.
+A high-performance, responsive 3D bin packing visualization system built using Three.js and parallel multi-core Web Workers. It runs 100% client-side, keeps its runtime dependencies in the repository for offline use, and is ready for cloud deployment via GitHub Pages.
 
 ---
 
@@ -40,6 +40,9 @@ A high-performance, responsive 3D bin packing visualization system built using T
 * `packer.js`: Core algorithmic module including `Item`, `Packer`, and 2D backtracking solver.
 * `app.js`: Application controller. Manages Three.js WebGL scene, UI event handlers, and multi-core Worker orchestration.
 * `test_suite.html`: Integrated headless-ready browser unit and integration test runner.
+* `tests/`: Node.js regression tests for the packing engine.
+* `vendor/`: Pinned Three.js runtime and controls used by the offline application.
+* `.github/workflows/test.yml`: Automated syntax and algorithm checks.
 
 ---
 
@@ -54,7 +57,12 @@ cd 3d-packing-simulator
 ```
 
 ### Run Tests
-Open `test_suite.html` in any browser to execute the automated packing test suite.
+Open `test_suite.html` in any browser to execute the visual test suite, or use Node.js 20+ for CI-friendly regression tests:
+
+```bash
+npm test
+npm run check
+```
 
 ---
 

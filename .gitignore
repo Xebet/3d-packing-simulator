@@ -2,3 +2,6 @@
 *.log
 .system_generated/
 out_test_suite.txt
+node_modules/
+coverage/
+.DS_Store
