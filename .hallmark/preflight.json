@@ -1,0 +1,13 @@
+{
+  "scanned": "2026-11-10",
+  "scope": "app",
+  "findings": {
+    "framework": "Vanilla HTML, CSS and JavaScript; package.json:1; local Three.js runtime in index.html:18",
+    "fonts": "Offline system fallback; former style.css:23 requested Inter without loading it",
+    "palette": "Former style.css:6 used dark slate and indigo/cyan defaults, with a light-theme override",
+    "motion": "Former app.js:230 ran a perpetual requestAnimationFrame control-update loop; former style.css:1209 used transition all",
+    "product": "Single app screen in index.html, with automatic and manual packing, a live WebGL scene, and browser test_suite.html"
+  },
+  "preserve": ["Chinese interface", "auto and manual packing", "container orientation search", "step playback", "light and dark modes", "existing input ids and script hooks", "offline runtime"],
+  "introduce": ["Console graphite/paper palette", "shared design tokens", "responsive configuration disclosure", "cancellable calculation", "pure allocation module", "bounded search", "undo and focus containment"]
+}

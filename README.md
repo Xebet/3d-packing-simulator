@@ -14,9 +14,9 @@ A high-performance, responsive 3D bin packing visualization system built using T
 ## ⚡ Key Features
 
 ### 1. Multi-Core Asynchronous Parallel Packer
-* **Background Workers**: Calculation is offloaded to background `Web Workers` spawned dynamically according to `navigator.hardwareConcurrency` (up to 8 threads).
-* **Fully Responsive UI**: The main browser thread remains 100% responsive (no lag, no "Page not responding" warnings) during deep calculations.
-* **CPU Maximization**: Utilizes multi-core CPUs to run parallel greedy packing trials and layer partitions simultaneously.
+* **Background Workers**: Calculation is offloaded to background `Web Workers` spawned dynamically according to `navigator.hardwareConcurrency` (up to 4 workers, leaving a logical core available for the browser).
+* **Fully Responsive UI**: Search runs in cancellable background jobs. Worker creation failures use two short, time-limited main-thread trials; search depth can be lower in that mode.
+* **CPU Maximization**: Utilizes multi-core CPUs to run greedy strategies in parallel after a bounded layer-search phase.
 
 ### 2. High-Performance Packing Engine
 * **Layer Backtracking Solver (DFS)**: Slices the container along shared dimension axes to solve as a 2D grid using DFS backtracking. Perfect for highly-constrained scenarios (e.g. perfectly packing the extreme 49-item set).
@@ -27,18 +27,22 @@ A high-performance, responsive 3D bin packing visualization system built using T
 * **Auto Mode**: Renders the optimal layout automatically and provides a step-by-step playback controller (Timeline Slider).
 * **Manual Mode**: Drag-and-drop items manually using standard 3D Transform Controls (Gizmos). Features auto snap-to-grid (1cm), gravity drop helper, and real-time collision detection (highlighting overlapping boxes in red).
 
-### 4. Rich Themes & WCAG Accessibility
+### 4. Workbench & Accessibility
 * Supports seamless Day/Night theme toggles.
-* High color contrast ratios optimized for light and dark environments (perfect contrast on panels, buttons, and alert modals).
+* Responsive configuration disclosure, visible keyboard focus, keyboard tabs, modal focus containment, and reduced-motion support.
+* Auto/manual layouts survive mode switches. Product deletion and manual removal offer Undo for 10 seconds.
 
 ---
 
 ## 📂 Project Architecture
 
 * `index.html`: The UI skeleton and layout.
-* `style.css`: Modern visual styles, animations, responsive glassmorphism panels, and themes.
+* `style.css`: Modern visual styles, animations, responsive workbench layout.
+* `cargo.js`: Pure inventory validation and weight/volume quantity allocation.
+* `packing-jobs.js`: Cancellable worker jobs, bounded fallback, and result validation.
+* `tokens.css` / `base.css`: Offline light/dark design tokens and shared accessible defaults.
 * `packer.js`: Core algorithmic module including `Item`, `Packer`, and 2D backtracking solver.
-* `app.js`: Application controller. Manages Three.js WebGL scene, UI event handlers, and multi-core Worker orchestration.
+* `app.js`: Application controller. Manages the Three.js scene, input validation, focus, and UI lifecycle.
 * `test_suite.html`: Integrated headless-ready browser unit and integration test runner.
 * `tests/`: Node.js regression tests for the packing engine.
 * `vendor/`: Pinned Three.js runtime and controls used by the offline application.
@@ -65,6 +69,21 @@ npm run check
 ```
 
 ---
+
+## Browser verification
+
+With Chrome and a local or global installation of `puppeteer-core`, run `npm run test:browser`. Set `CHROME_PATH` when Chrome is not in its usual location; `PUPPETEER_ROOT` can point to an existing package root. The app itself still needs no installation.
+
+## Limits and privacy
+
+- Packing is a heuristic search, not a proof of a global optimum. The full inventory is capped at 1,000 items.
+- Layer search applies to at most 128 items and 64 layers, with node and time limits. Larger inputs use the greedy search. Each worker is terminated after 15 seconds.
+- Quantity allocation uses a 75% volume estimate plus the configured weight limit, then runs the 3D solver. Geometric packing itself does not remove overweight cargo; the workspace labels excess weight.
+- A 50% overlap threshold is a geometric support rule, not a structural or load-bearing certification.
+- No remote runtime requests are needed. The page CSP blocks network connections, inline scripts, embedded objects, and form submissions. Inline styles remain enabled for the live 3D controls.
+- Only theme and guide preferences use local storage; inventory/layouts remain in the current tab. There is no server or account storage.
+
+See [the optimization and review record](docs/optimization-review.md) for verified changes and remaining limits.
 
 ## 📖 Core Algorithmic Details
 

@@ -11,7 +11,7 @@
 const EPS_OVERLAP = 0.001;      // 碰撞检测容差
 const EPS_CONTACT = 0.01;       // 接触面积计算容差
 const EPS_STABILITY = 0.05;     // 稳定性检查容差
-const EPS_DIMENSION = 0.1;      // 公共维度检测容差
+const EPS_DIMENSION = 0.001;      // 公共维度检测容差
 const DEFAULT_SUPPORT_RATIO = 0.5;  // 默认最低支撑率
 
 // 碰撞检测辅助函数：检查两个三维立方体是否在空间上重叠 (支持旋转后的 rw/rh/rd 尺寸)
@@ -157,6 +157,13 @@ class Packer {
     // EMS 剪枝与优化函数
     static pruneSpaces(spacesList, remainingPool, maxSpaces = 200) {
         const pruned = [];
+        const typeKeys = new Set();
+        remainingPool = remainingPool.filter(item => {
+            const key = [item.w, item.h, item.d].join('|');
+            if (typeKeys.has(key)) return false;
+            typeKeys.add(key);
+            return true;
+        });
         for (let i = 0; i < spacesList.length; i++) {
             const s1 = spacesList[i];
             if (s1.w <= EPS_OVERLAP || s1.h <= EPS_OVERLAP || s1.d <= EPS_OVERLAP) {
@@ -312,11 +319,22 @@ class Packer {
     static validatePackingResult(placed, binW, binH, binD, checkStability = true, supportRatio = DEFAULT_SUPPORT_RATIO) {
         const errors = [];
         const eps = EPS_OVERLAP;
+        if (![binW, binH, binD].every(value => Number.isFinite(value) && value > 0) ||
+            !Number.isFinite(supportRatio) || supportRatio < 0 || supportRatio > 1 || !Array.isArray(placed)) {
+            return { valid: false, errors: [{ type: 'INVALID_INPUT', detail: 'Invalid container, support ratio, or item list' }] };
+        }
+        const ids = new Set();
         const supportIndex = checkStability ? Packer.createSupportIndex() : null;
-        if (supportIndex) placed.forEach(item => supportIndex.add(item));
+        if (supportIndex) placed.forEach(item => { if (item && Number.isFinite(item.y + item.rh)) supportIndex.add(item); });
 
         for (let i = 0; i < placed.length; i++) {
             const item = placed[i];
+            if (!item) {
+                errors.push({ type: 'INVALID_GEOMETRY', detail: 'Item is missing' });
+                continue;
+            }
+            if (ids.has(item.id)) errors.push({ type: 'DUPLICATE_ID', item, detail: 'Item ids must be unique' });
+            ids.add(item.id);
 
             if (![item.x, item.y, item.z, item.rw, item.rh, item.rd].every(Number.isFinite) ||
                 item.rw <= 0 || item.rh <= 0 || item.rd <= 0) {
@@ -351,7 +369,7 @@ class Packer {
 
         // Sweep-and-prune：按 X 起点排序，X 轴已分离后即可停止内层扫描。
         const byMinX = placed
-            .filter(item => [item.x, item.y, item.z, item.rw, item.rh, item.rd].every(Number.isFinite))
+            .filter(item => item && [item.x, item.y, item.z, item.rw, item.rh, item.rd].every(Number.isFinite))
             .slice()
             .sort((a, b) => a.x - b.x);
         for (let i = 0; i < byMinX.length; i++) {
@@ -381,11 +399,21 @@ class Packer {
         this.unpacked = []; // 未能装入的物品
     }
 
+    static assertItems(items) {
+        if (!Array.isArray(items) || items.length > 1000) throw new RangeError('Expected an array of at most 1000 items');
+        const ids = new Set();
+        for (const item of items) {
+            if (!(item instanceof Item) || ![item.w, item.h, item.d].every(v => Number.isFinite(v) && v > 0) ||
+                !Number.isFinite(item.weight) || item.weight < 0 || ids.has(item.id)) {
+                throw new RangeError('Items must have valid dimensions, weights, and unique ids');
+            }
+            ids.add(item.id);
+        }
+    }
+
     // 执行多起点最佳适配装箱算法（多维启发式与局部扰动搜索）
     pack(itemsToPack, options = {}) {
-        if (!Array.isArray(itemsToPack)) {
-            throw new TypeError('itemsToPack must be an array');
-        }
+        Packer.assertItems(itemsToPack);
         const checkStability = options.checkStability !== false; // 是否校验重力支撑
         const supportRatio = options.supportRatio !== undefined ? options.supportRatio : DEFAULT_SUPPORT_RATIO; // 支撑面积占比阈值
         if (!Number.isFinite(supportRatio) || supportRatio < 0 || supportRatio > 1) {
@@ -423,13 +451,16 @@ class Packer {
 
     // 执行子范围区间的贪心装箱试验
     runGreedyPackTrials(itemsToPack, options = {}, startTrial = 0, numTrials = 60) {
+        Packer.assertItems(itemsToPack);
+        if (!Number.isInteger(startTrial) || startTrial < 0 || !Number.isInteger(numTrials) || numTrials < 1 || numTrials > 1000) throw new RangeError('Invalid trial range');
+        const deadline = options.timeBudgetMs === undefined ? Infinity : performance.now() + options.timeBudgetMs;
         const checkStability = options.checkStability !== false;
         const supportRatio = options.supportRatio !== undefined ? options.supportRatio : DEFAULT_SUPPORT_RATIO;
         if (!Number.isFinite(supportRatio) || supportRatio < 0 || supportRatio > 1) {
             throw new RangeError(`supportRatio must be between 0 and 1, got ${supportRatio}`);
         }
 
-        let bestPacking = { items: [], unpacked: [], score: -Infinity };
+        let bestPacking = { items: [], unpacked: [...itemsToPack], score: -Infinity };
         let bestScore = -Infinity;
 
         const biggerFirst = options.biggerFirst !== false;
@@ -481,6 +512,7 @@ class Packer {
         const scoreWeights = { ...Packer.DEFAULT_SCORE_WEIGHTS, ...(options.weights || {}) };
 
         for (let trial = startTrial; trial < limitEnd; trial++) {
+            if (trial > startTrial && performance.now() > deadline) break;
             const rng = Packer.mulberry32(baseSeed + trial);
             let sortedItems;
             let lookAheadK = 1;
@@ -513,7 +545,7 @@ class Packer {
             const maxCandidatePositions = options.maxCandidatePositions !== undefined
                 ? options.maxCandidatePositions
                 : (trial % 5 === 0 ? 16 : 4);
-            const currentPacking = this.runSinglePack(sortedItems, checkStability, supportRatio, w_y, w_z, w_x, lookAheadK, maxSpaces, maxCandidatePositions);
+            const currentPacking = this.runSinglePack(sortedItems, checkStability, supportRatio, w_y, w_z, w_x, lookAheadK, maxSpaces, maxCandidatePositions, deadline);
 
             // 自动校验所生成结果的合法性
             const validation = Packer.validatePackingResult(currentPacking.items, this.binW, this.binH, this.binD, checkStability, supportRatio);
@@ -560,7 +592,7 @@ class Packer {
     }
 
     // 运行单次装入模拟 (基于 EMS 最大空腔与多物前瞻的最佳适配算法)
-    runSinglePack(sortedItems, checkStability, supportRatio, w_y, w_z, w_x, lookAheadK, maxSpaces = 200, maxCandidatePositions = 4) {
+    runSinglePack(sortedItems, checkStability, supportRatio, w_y, w_z, w_x, lookAheadK, maxSpaces = 200, maxCandidatePositions = 4, deadline = Infinity) {
         const placed = [];
         const pool = [...sortedItems]; // 待装载货物池
 
@@ -612,6 +644,7 @@ class Packer {
         };
 
         while (pool.length > 0) {
+            if (performance.now() > deadline) break;
             let bestChoice = null;
             let maxScore = -Infinity;
 
@@ -621,7 +654,10 @@ class Packer {
             // 1. 尝试从前瞻窗口内的 K 个货物中选取最适配的进行码放
             // 采用货物品质类型去重优化，确保相同规格的货物只被校验一次
             const processedTypesInWindow = new Set();
-            for (let i = 0; i < k; i++) {
+            for (let i = 0; i < pool.length; i++) {
+                if (performance.now() > deadline) break;
+                // Only widen the look-ahead when its whole window has no feasible placement.
+                if (i === k && bestChoice) break;
                 const item = pool[i];
                 const itemTypeKey = `${item.name}_${item.w}_${item.h}_${item.d}_${item.weight || 0}`;
                 if (processedTypesInWindow.has(itemTypeKey)) continue;
@@ -686,74 +722,6 @@ class Packer {
                             if (score > maxScore) {
                                 maxScore = score;
                                 bestChoice = { poolIndex: i, x: px, y: py, z: pz, rotationType: rot.rotationType, rw, rh, rd, item };
-                            }
-                        }
-                    }
-                }
-            }
-
-            // 2. 如果前瞻窗口内的所有货物由于尺寸或稳定性限制均无法装载，则扫描窗口外的剩余货物
-            if (!bestChoice && k < pool.length) {
-                const processedTypesOutsideWindow = new Set();
-                for (let i = k; i < pool.length; i++) {
-                    const item = pool[i];
-                    const itemTypeKey = `${item.name}_${item.w}_${item.h}_${item.d}_${item.weight || 0}`;
-                    if (processedTypesOutsideWindow.has(itemTypeKey)) continue;
-                    processedTypesOutsideWindow.add(itemTypeKey);
-
-                    const uniqueOrientations = Packer.getUniqueOrientations(item);
-
-                    for (let sIdx = 0; sIdx < spaces.length; sIdx++) {
-                        const s = spaces[sIdx];
-
-                        for (let rIdx = 0; rIdx < uniqueOrientations.length; rIdx++) {
-                            const rot = uniqueOrientations[rIdx];
-                            const rw = rot.rw;
-                            const rh = rot.rh;
-                            const rd = rot.rd;
-
-                            if (rw > s.w + EPS_OVERLAP || rh > s.h + EPS_OVERLAP || rd > s.d + EPS_OVERLAP) {
-                                continue;
-                            }
-
-                            const candidatePositions = Packer.getEMSPositions(s, rw, rd, placed, maxCandidatePositions);
-
-                            for (let pIdxCoord = 0; pIdxCoord < candidatePositions.length; pIdxCoord++) {
-                                const pos = candidatePositions[pIdxCoord];
-                                const px = pos.x;
-                                const py = pos.y;
-                                const pz = pos.z;
-
-                                if (px + rw > this.binW || py + rh > this.binH || pz + rd > this.binD) {
-                                    continue;
-                                }
-
-                                if (Packer.checkCollision(px, py, pz, rw, rh, rd, placed, EPS_OVERLAP)) {
-                                    continue;
-                                }
-
-                                if (checkStability && py > 0) {
-                                    let supportedArea = 0;
-                                    const bottomArea = rw * rd;
-                                    const supporters = supportIndex.get(py);
-                                    for (let pIdx = 0; pIdx < supporters.length; pIdx++) {
-                                        const pItem = supporters[pIdx];
-                                        const xOverlap = Math.max(0, Math.min(px + rw, pItem.x + pItem.rw) - Math.max(px, pItem.x));
-                                        const zOverlap = Math.max(0, Math.min(pz + rd, pItem.z + pItem.rd) - Math.max(pz, pItem.z));
-                                        supportedArea += xOverlap * zOverlap;
-                                    }
-                                    if ((supportedArea / bottomArea) < supportRatio) {
-                                        continue;
-                                    }
-                                }
-
-                                const contact = this.getPlacementContactArea(px, py, pz, rw, rh, rd, placed, item.id);
-                                const score = - (py + rh) * w_y - (pz + rd) * w_z - (px + rw) * w_x + contact * 10;
-
-                                if (score > maxScore) {
-                                    maxScore = score;
-                                    bestChoice = { poolIndex: i, x: px, y: py, z: pz, rotationType: rot.rotationType, rw, rh, rd, item };
-                                }
                             }
                         }
                     }
@@ -904,6 +872,9 @@ class Packer {
 
     // 支持指定组合范围的层级回溯分发策略
     tryLayerBacktrackingPackWithPartitions(itemsToPack, checkStability, supportRatio, startPartition, endPartition) {
+        if (!itemsToPack.length || itemsToPack.length > 128) return null;
+        const deadline = performance.now() + 10000;
+        if (itemsToPack.reduce((sum, item) => sum + item.w * item.h * item.d, 0) > this.binW * this.binH * this.binD + EPS_OVERLAP) return null;
         // 1. 检测是否有所有物品共同持有的特征维度 (公维)
         let commonDim = null;
         if (itemsToPack.length > 0) {
@@ -928,7 +899,8 @@ class Packer {
 
         // 2. 检查 Z 轴 (深度) 是否适合作为层级对齐轴线
         const numLayers = Math.floor(this.binD / commonDim);
-        if (numLayers < 1) return null;
+        // shortcut: deep recursion is limited to 64 layers; the greedy solver handles larger layer counts.
+        if (numLayers < 1 || numLayers > 64) return null;
 
         const crossW = this.binW;
         const crossH = this.binH;
@@ -995,6 +967,7 @@ class Packer {
 
         // 6. 依次尝试指定区间内的分拆方案，为每层调用 2D 稳定回溯求解器
         for (let pIdx = limitStart; pIdx < limitEnd; pIdx++) {
+            if (performance.now() > deadline) return null;
             const partition = partitions[pIdx];
             let allLayersSuccess = true;
             const layersSolutions = [];
@@ -1010,7 +983,7 @@ class Packer {
                 }
 
                 // 2D 稳定回溯求解
-                const res = this.solve2D(crossW, crossH, layerItems, checkStability, supportRatio);
+                const res = this.solve2D(crossW, crossH, layerItems, checkStability, supportRatio, deadline);
                 if (!res.success) {
                     allLayersSuccess = false;
                     break;
@@ -1041,28 +1014,7 @@ class Packer {
                     }
                 }
 
-                // 进行全局 3D 稳定性校验，以防万一
-                if (checkStability) {
-                    let stable = true;
-                    for (const it of placed3D) {
-                        if (it.y > 0) {
-                            let supportedArea = 0;
-                            const bottomArea = it.rw * it.rd;
-                            for (const other of placed3D) {
-                                if (other.id !== it.id && Math.abs((other.y + other.rh) - it.y) < EPS_STABILITY) {
-                                    const xOverlap = Math.max(0, Math.min(it.x + it.rw, other.x + other.rw) - Math.max(it.x, other.x));
-                                    const zOverlap = Math.max(0, Math.min(it.z + it.rd, other.z + other.rd) - Math.max(it.z, other.z));
-                                    supportedArea += xOverlap * zOverlap;
-                                }
-                            }
-                            if ((supportedArea / bottomArea) < supportRatio) {
-                                stable = false;
-                                break;
-                            }
-                        }
-                    }
-                    if (!stable) continue;
-                }
+                if (!Packer.validatePackingResult(placed3D, this.binW, this.binH, this.binD, checkStability, supportRatio).valid) continue;
 
                 return placed3D;
             }
@@ -1074,6 +1026,9 @@ class Packer {
     // 辅助函数：生成所有合理的层面积分拆组合 (采用对称偏差剪枝优化，杜绝组合数爆炸)
     getPartitions(itemTypes, numLayers, crossW, crossH) {
         const partitions = [];
+        if (!Number.isInteger(numLayers) || numLayers < 1 || numLayers > 64 || itemTypes.length > 128) return partitions;
+        let visited = 0;
+        const maxVisits = 20000;
         const currentPartition = Array.from({ length: numLayers }, () => Object.create(null));
         for (const type of itemTypes) {
             for (let j = 0; j < numLayers; j++) {
@@ -1084,7 +1039,7 @@ class Packer {
         const maxArea = crossW * crossH;
 
         const searchPartition = (typeIdx) => {
-            if (partitions.length >= 5000) return;
+            if (partitions.length >= 5000 || ++visited > maxVisits) return;
             if (typeIdx === itemTypes.length) {
                 const layerAreas = [];
                 for (let j = 0; j < numLayers; j++) {
@@ -1124,6 +1079,7 @@ class Packer {
             const maxQty = Math.min(qty, Math.ceil(avg + maxDev));
 
             const distribute = (layerIdx, remainingQty) => {
+                if (partitions.length >= 5000 || ++visited > maxVisits) return;
                 if (layerIdx === numLayers - 1) {
                     if (remainingQty >= minQty && remainingQty <= maxQty) {
                         currentPartition[layerIdx][type.key] = remainingQty;
@@ -1135,7 +1091,7 @@ class Packer {
                 const startQ = Math.max(minQty, remainingQty - (numLayers - 1 - layerIdx) * maxQty);
                 const endQ = Math.min(maxQty, remainingQty - (numLayers - 1 - layerIdx) * minQty);
 
-                for (let q = startQ; q <= endQ; q++) {
+                for (let q = startQ; q <= endQ && visited <= maxVisits && partitions.length < 5000; q++) {
                     currentPartition[layerIdx][type.key] = q;
                     distribute(layerIdx + 1, remainingQty - q);
                 }
@@ -1158,7 +1114,7 @@ class Packer {
     }
 
     // 辅助函数：2D 稳定回溯求解器
-    solve2D(binW, binH, items, checkStability, supportRatio) {
+    solve2D(binW, binH, items, checkStability, supportRatio, deadline = performance.now() + 1500) {
         let solutions = [];
         let placed = [];
         let pool = [...items];
@@ -1172,7 +1128,7 @@ class Packer {
 
         const backtrack = () => {
             nodesVisited++;
-            if (nodesVisited > maxNodes) return false;
+            if (nodesVisited > maxNodes || (nodesVisited % 128 === 0 && performance.now() > deadline)) return false;
 
             if (pool.length === 0) {
                 solutions = placed.map(p => ({

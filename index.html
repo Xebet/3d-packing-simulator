@@ -4,6 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>3D 智能装箱模拟器 & 交互式排布系统</title>
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; worker-src blob:; img-src 'self' data:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+    <meta name="referrer" content="no-referrer">
+    <meta name="theme-color" content="#151b20">
     <link rel="stylesheet" href="./style.css">
     <meta name="description" content="免费在线 3D 智能装箱模拟器，支持多核并行计算、自动/手动双模式装箱、Three.js 实时 3D 渲染与碰撞检测。100% 离线可用，无需安装。">
     <meta name="keywords" content="3D装箱,bin packing,装箱模拟器,packing simulator,Three.js,Web Workers">
@@ -11,18 +14,20 @@
     <meta property="og:description" content="高性能离线 3D 装箱配载系统，支持多核并行计算与实时 3D 可视化。">
     <meta property="og:type" content="website">
     <link rel="canonical" href="https://Xebet.github.io/3d-packing-simulator/">
-    
+
     <!-- 加载非 ESM 版本的 Three.js 核心库及其经典控制器插件 -->
     <script src="./vendor/three.min.js" defer></script>
     <script src="./vendor/OrbitControls.js" defer></script>
     <script src="./vendor/TransformControls.js" defer></script>
 </head>
 <body>
+    <noscript><p class="noscript-note">本工具需要 JavaScript 才能计算和显示三维布局。所有计算均在本机完成。</p></noscript>
+    <a class="skip-link" href="#workspace">跳到三维工作区</a>
     <!-- 顶部标题栏 -->
     <header>
         <div class="logo-group">
             <div class="logo-icon">
-                <svg viewBox="0 0 24 24">
+                <svg aria-hidden="true" viewBox="0 0 24 24">
                     <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
                     <line x1="9" y1="3" x2="9" y2="21"></line>
                     <line x1="15" y1="3" x2="15" y2="21"></line>
@@ -31,54 +36,53 @@
                 </svg>
             </div>
             <h1>3D 智能装箱模拟器</h1>
-            <span class="header-tag">Local Offline Version</span>
+            <span class="header-tag">离线工作台</span>
         </div>
-        <div style="display: flex; align-items: center; gap: 1rem;">
-            <button id="about-toggle" class="btn btn-secondary" style="padding: 0.4rem 0.8rem; font-size: 0.75rem; border-color: var(--primary); color: var(--primary);">
-                <svg viewBox="0 0 24 24" style="width: 0.95rem; height: 0.95rem; stroke: currentColor; fill: none; stroke-width: 2; margin-right: 2px; vertical-align: middle;"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+        <div class="header-actions">
+            <button type="button" id="about-toggle" class="btn btn-secondary">
+                <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
                 <span>关于 / About</span>
             </button>
-            <button id="theme-toggle" class="btn btn-secondary" style="padding: 0.4rem 0.8rem; font-size: 0.75rem; border-color: var(--primary); color: var(--primary);">
-                <svg viewBox="0 0 24 24" style="width: 0.95rem; height: 0.95rem; stroke: currentColor; fill: none; stroke-width: 2;"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+            <button type="button" id="theme-toggle" class="btn btn-secondary">
+                <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
                 <span id="theme-text">日间模式</span>
             </button>
-            <div style="font-size: 0.8rem; color: var(--text-secondary);">
-                Antigravity Pair Program
-            </div>
+
         </div>
     </header>
 
+    <button type="button" class="mobile-config-toggle btn btn-secondary" id="config-toggle" aria-expanded="false" aria-controls="configuration">展开装箱配置</button>
     <!-- 主容器 -->
-    <main>
+    <main id="main-content">
         <!-- 左侧控制面板 -->
-        <div class="sidebar">
-            <div class="sidebar-content">
-                
+        <aside class="sidebar" aria-label="装箱配置">
+            <div class="sidebar-content" id="configuration">
+
                 <!-- 1. 容器尺寸配置 -->
                 <div class="control-group" id="tour-container-config">
                     <div class="group-title">
-                        <span>容器尺寸设置 (Container Dimensions)</span>
-                        <svg viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>
+                        <span>容器与承载</span>
+                        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>
                     </div>
                     <div class="input-row">
                         <div class="input-field">
                             <label for="bin-l">长度 (L)</label>
                             <div class="input-wrapper">
-                                <input type="number" id="bin-l" value="60" min="5" max="500">
+                                <input type="number" id="bin-l" value="60" min="5" max="500" autocomplete="off" inputmode="decimal">
                                 <span class="input-unit">cm</span>
                             </div>
                         </div>
                         <div class="input-field">
                             <label for="bin-w">宽度 (W)</label>
                             <div class="input-wrapper">
-                                <input type="number" id="bin-w" value="40" min="5" max="500">
+                                <input type="number" id="bin-w" value="40" min="5" max="500" autocomplete="off" inputmode="decimal">
                                 <span class="input-unit">cm</span>
                             </div>
                         </div>
                         <div class="input-field">
                             <label for="bin-h">高度 (H)</label>
                             <div class="input-wrapper">
-                                <input type="number" id="bin-h" value="50" min="5" max="500">
+                                <input type="number" id="bin-h" value="50" min="5" max="500" autocomplete="off" inputmode="decimal">
                                 <span class="input-unit">cm</span>
                             </div>
                         </div>
@@ -87,55 +91,108 @@
                         <div class="input-field">
                             <label for="bin-empty-weight">箱子空重</label>
                             <div class="input-wrapper">
-                                <input type="number" id="bin-empty-weight" value="1.5" step="0.1" min="0">
+                                <input type="number" id="bin-empty-weight" value="1.5" step="0.1" min="0" max="100000" autocomplete="off" inputmode="decimal">
                                 <span class="input-unit">kg</span>
                             </div>
                         </div>
                         <div class="input-field">
                             <label for="bin-max-weight">承载上限</label>
                             <div class="input-wrapper">
-                                <input type="number" id="bin-max-weight" value="21.0" step="0.1" min="1">
+                                <input type="number" id="bin-max-weight" value="21.0" step="0.1" min="0.01" max="100000" autocomplete="off" inputmode="decimal">
                                 <span class="input-unit">kg</span>
                             </div>
                         </div>
                         <div class="input-field">
                             <label for="bin-divisor">泡货系数</label>
                             <div class="input-wrapper">
-                                <input type="number" id="bin-divisor" value="8000" min="1">
+                                <input type="number" id="bin-divisor" value="8000" min="1" max="100000" autocomplete="off" inputmode="decimal">
                             </div>
                         </div>
                     </div>
                 </div>
 
                 <!-- 2. 工作模式切换 (Tab) -->
-                <div class="tab-container" id="tour-modes" role="tablist">
-                    <button id="tab-auto" class="tab active" role="tab" aria-selected="true" aria-controls="auto-panel">
+                <div class="tab-container" id="tour-modes" role="tablist" aria-label="装箱模式">
+                    <button type="button" id="tab-auto" class="tab active" role="tab" aria-selected="true" aria-controls="auto-panel">
                         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"></path></svg>
                         自动算法装箱
                     </button>
-                    <button id="tab-manual" class="tab" role="tab" aria-selected="false" aria-controls="manual-panel">
+                    <button type="button" id="tab-manual" class="tab" role="tab" tabindex="-1" aria-selected="false" aria-controls="manual-panel">
                         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"></path></svg>
                         手动交互排布
                     </button>
                 </div>
 
+                <!-- 4A. 自动模式专用面板 -->
+                <div class="control-group" id="auto-panel" role="tabpanel" aria-labelledby="tab-auto">
+                    <div class="group-title">
+                        <span>自动装箱</span>
+                        <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+                    </div>
+
+                    <div>
+                        <label>
+                            <span>重力支撑率至少 50%</span>
+                            <input type="checkbox" id="cfg-stability" checked>
+                        </label>
+                        <label>
+                            <span>优先尝试大件</span>
+                            <input type="checkbox" id="cfg-bigger-first" checked>
+                        </label>
+                    </div>
+
+                    <button type="button" id="calc-qty-btn" class="btn btn-secondary">
+                        <svg aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="9" y1="9" x2="15" y2="15"></line><line x1="15" y1="9" x2="9" y2="15"></line></svg>
+                        智能配载数量计算
+                    </button>
+                    <button type="button" id="run-pack-btn" class="btn btn-primary">
+                        <svg aria-hidden="true" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                        开始计算智能装箱
+                    </button>
+
+                    <!-- 分步装载动画栏 (动画播放器) -->
+                    <div id="anim-section" style="display: none;">
+                        <div class="anim-controls">
+                            <button type="button" id="anim-prev" class="btn btn-secondary" aria-label="上一步" title="上一步">
+                                <svg aria-hidden="true" viewBox="0 0 24 24"><polygon points="19 20 9 12 19 4 19 20"></polygon><line x1="5" y1="19" x2="5" y2="5"></line></svg>
+                            </button>
+                            <button type="button" id="anim-play" class="btn btn-secondary" aria-label="播放" title="播放">
+                                <svg aria-hidden="true" id="play-icon" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                            </button>
+                            <button type="button" id="anim-next" class="btn btn-secondary" aria-label="下一步" title="下一步">
+                                <svg aria-hidden="true" viewBox="0 0 24 24"><polygon points="5 4 15 12 5 20 5 4"></polygon><line x1="19" y1="5" x2="19" y2="19"></line></svg>
+                            </button>
+
+                            <div class="anim-timeline-wrapper">
+                                <div class="timeline-header">
+                                    <span>装载步骤</span>
+                                    <span id="step-counter">0 / 0</span>
+                                </div>
+                                <input type="range" id="anim-timeline" aria-label="装箱回放步骤" class="timeline-slider" min="0" max="0" value="0">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+
                 <!-- 3. 产品清单配置 -->
                 <div class="control-group" id="tour-box-config">
                     <div class="group-title">
-                        <span>产品盒子配置 (Box Inventory)</span>
-                        <svg viewBox="0 0 24 24"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"></polyline><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"></path></svg>
+                        <span>产品清单</span><span id="inventory-summary" class="inventory-summary">0 种 / 0 件</span>
+                        <svg aria-hidden="true" viewBox="0 0 24 24"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"></polyline><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"></path></svg>
                     </div>
-                    
+
+                    <details class="product-editor"><summary>添加产品规格</summary>
                     <div class="input-row">
-                        <div class="input-field" style="flex: 2;">
+                        <div class="input-field">
                             <label for="item-name">产品名称</label>
                             <div class="input-wrapper">
-                                <input type="text" id="item-name" value="盒子A" maxlength="80">
+                                <input type="text" id="item-name" value="盒子A" maxlength="80" autocomplete="off">
                             </div>
                         </div>
                         <div class="input-field">
                             <label for="item-color">颜色</label>
-                            <input type="color" id="item-color" value="#6366f1" style="width: 100%; height: 32px; border: 1px solid var(--panel-border); border-radius: 8px; cursor: pointer; padding: 2px; background: transparent;">
+                            <input type="color" id="item-color" class="color-input" value="#6366f1">
                         </div>
                     </div>
 
@@ -143,21 +200,21 @@
                         <div class="input-field">
                             <label for="item-l">长 (l)</label>
                             <div class="input-wrapper">
-                                <input type="number" id="item-l" value="15" min="0.01" max="500" step="0.01">
+                                <input type="number" id="item-l" value="15" min="0.01" max="500" step="0.01" autocomplete="off" inputmode="decimal">
                                 <span class="input-unit">cm</span>
                             </div>
                         </div>
                         <div class="input-field">
                             <label for="item-w">宽 (w)</label>
                             <div class="input-wrapper">
-                                <input type="number" id="item-w" value="10" min="0.01" max="500" step="0.01">
+                                <input type="number" id="item-w" value="10" min="0.01" max="500" step="0.01" autocomplete="off" inputmode="decimal">
                                 <span class="input-unit">cm</span>
                             </div>
                         </div>
                         <div class="input-field">
                             <label for="item-h">高 (h)</label>
                             <div class="input-wrapper">
-                                <input type="number" id="item-h" value="12" min="0.01" max="500" step="0.01">
+                                <input type="number" id="item-h" value="12" min="0.01" max="500" step="0.01" autocomplete="off" inputmode="decimal">
                                 <span class="input-unit">cm</span>
                             </div>
                         </div>
@@ -167,20 +224,20 @@
                         <div class="input-field">
                             <label for="item-weight">单重</label>
                             <div class="input-wrapper">
-                                <input type="number" id="item-weight" value="1.5" step="0.1" min="0" max="100000">
+                                <input type="number" id="item-weight" value="1.5" step="0.1" min="0" max="100000" autocomplete="off" inputmode="decimal">
                                 <span class="input-unit">kg</span>
                             </div>
                         </div>
                         <div class="input-field">
                             <label for="item-ratio">装箱配比</label>
                             <div class="input-wrapper">
-                                <input type="number" id="item-ratio" value="0" min="0" max="100000" step="1">
+                                <input type="number" id="item-ratio" value="0" min="0" max="100000" step="1" autocomplete="off" inputmode="decimal">
                             </div>
                         </div>
                         <div class="input-field">
                             <label for="item-min-qty">最少数量</label>
                             <div class="input-wrapper">
-                                <input type="number" id="item-min-qty" value="0" min="0" max="1000" step="1">
+                                <input type="number" id="item-min-qty" value="0" min="0" max="1000" step="1" autocomplete="off" inputmode="decimal">
                                 <span class="input-unit">个</span>
                             </div>
                         </div>
@@ -190,154 +247,162 @@
                         <div class="input-field" id="qty-field">
                             <label for="item-qty">数量 (Qty)</label>
                             <div class="input-wrapper">
-                                <input type="number" id="item-qty" value="8" min="1" max="1000" step="1">
+                                <input type="number" id="item-qty" value="8" min="1" max="1000" step="1" autocomplete="off" inputmode="decimal">
                                 <span class="input-unit">个</span>
                             </div>
                         </div>
-                        <div class="input-field" style="align-items: flex-end; justify-content: flex-end;">
-                            <button id="add-item-btn" class="btn btn-secondary" style="width: 100%; height: 35px;">
-                                <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                        <div class="input-field">
+                            <button type="button" id="add-item-btn" class="btn btn-secondary">
+                                <svg aria-hidden="true" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
                                 添加产品
                             </button>
                         </div>
                     </div>
 
                     <!-- 产品展示列表 -->
+                    </details>
                     <div class="inventory-list" id="inventory-items">
                         <!-- 动态填充 -->
                     </div>
-                </div>
-
-                <!-- 4A. 自动模式专用面板 -->
-                <div class="control-group" id="auto-panel">
-                    <div class="group-title">
-                        <span>算法参数与调试</span>
-                        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
-                    </div>
-
-                    <div style="display: flex; flex-direction: column; gap: 0.75rem;">
-                        <label style="display: flex; align-items: center; justify-content: space-between; font-size: 0.8rem; cursor: pointer; color: var(--text-secondary);">
-                            <span>重力稳定性强校验 (Require 50% support)</span>
-                            <input type="checkbox" id="cfg-stability" checked style="width: 16px; height: 16px; accent-color: var(--primary);">
-                        </label>
-                        <label style="display: flex; align-items: center; justify-content: space-between; font-size: 0.8rem; cursor: pointer; color: var(--text-secondary);">
-                            <span>大件物品优先排布 (Bigger First)</span>
-                            <input type="checkbox" id="cfg-bigger-first" checked style="width: 16px; height: 16px; accent-color: var(--primary);">
-                        </label>
-                    </div>
-
-                    <button id="calc-qty-btn" class="btn btn-secondary" style="margin-top: 0.25rem; border-color: var(--secondary); color: var(--secondary);">
-                        <svg viewBox="0 0 24 24" style="fill: none; stroke: currentColor; stroke-width: 2;"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="9" y1="9" x2="15" y2="15"></line><line x1="15" y1="9" x2="9" y2="15"></line></svg>
-                        智能配载数量计算
-                    </button>
-                    <button id="run-pack-btn" class="btn btn-primary" style="margin-top: 0.25rem;">
-                        <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
-                        开始计算智能装箱
-                    </button>
-
-                    <!-- 分步装载动画栏 (动画播放器) -->
-                    <div id="anim-section" style="display: none; border-top: 1px solid rgba(255, 255, 255, 0.05); padding-top: 1rem; margin-top: 0.25rem;">
-                        <div class="anim-controls">
-                            <button id="anim-prev" class="btn btn-secondary" style="padding: 0.4rem;" title="上一步">
-                                <svg viewBox="0 0 24 24"><polygon points="19 20 9 12 19 4 19 20"></polygon><line x1="5" y1="19" x2="5" y2="5"></line></svg>
-                            </button>
-                            <button id="anim-play" class="btn btn-secondary" style="padding: 0.4rem; color: var(--secondary);" title="播放">
-                                <svg id="play-icon" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
-                            </button>
-                            <button id="anim-next" class="btn btn-secondary" style="padding: 0.4rem;" title="下一步">
-                                <svg viewBox="0 0 24 24"><polygon points="5 4 15 12 5 20 5 4"></polygon><line x1="19" y1="5" x2="19" y2="19"></line></svg>
-                            </button>
-                            
-                            <div class="anim-timeline-wrapper">
-                                <div class="timeline-header">
-                                    <span>装载步骤</span>
-                                    <span id="step-counter">0 / 0</span>
-                                </div>
-                                <input type="range" id="anim-timeline" class="timeline-slider" min="0" max="0" value="0">
-                            </div>
-                        </div>
-                    </div>
+                    <div class="undo-row" id="inventory-undo" role="status" hidden><span>产品已删除</span><button type="button" class="btn btn-secondary" id="undo-inventory-btn">撤销删除</button></div>
                 </div>
 
                 <!-- 4B. 手动模式专用面板 -->
-                <div class="control-group" id="manual-panel" style="display: none;">
+                <div class="control-group" id="manual-panel" style="display: none;" role="tabpanel" aria-labelledby="tab-manual">
                     <div class="group-title">
                         <span>手动摆放控制</span>
-                        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><polyline points="12 8 8 12 12 16"></polyline><line x1="16" y1="12" x2="8" y2="12"></line></svg>
+                        <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><polyline points="12 8 8 12 12 16"></polyline><line x1="16" y1="12" x2="8" y2="12"></line></svg>
                     </div>
-                    
+
                     <div class="manual-control-panel">
                         <!-- 当前选中物品状态 -->
                         <div id="manual-status" class="selected-box-info">
-                            <span style="color: var(--text-muted); text-align: center;">💡 请在右侧3D视口中双击盒子，或在下方列表中选中盒子进行编辑摆放。</span>
+                            <span>请在右侧3D视口中双击盒子，或在下方列表中选中盒子进行编辑摆放。</span>
                         </div>
 
                         <!-- 坐标调整滑块组 -->
                         <div id="manual-coords-group" class="coord-slider-group" style="display: none;">
                             <div class="coord-slider-row">
-                                <label>X (宽)</label>
+                                <label for="slider-x">X (宽)</label>
                                 <input type="range" id="slider-x" min="0" max="100" value="0">
                                 <span id="val-x" class="coord-value">0 cm</span>
                             </div>
                             <div class="coord-slider-row">
-                                <label>Y (高)</label>
+                                <label for="slider-y">Y (高)</label>
                                 <input type="range" id="slider-y" min="0" max="100" value="0">
                                 <span id="val-y" class="coord-value">0 cm</span>
                             </div>
                             <div class="coord-slider-row">
-                                <label>Z (深)</label>
+                                <label for="slider-z">Z (深)</label>
                                 <input type="range" id="slider-z" min="0" max="100" value="0">
                                 <span id="val-z" class="coord-value">0 cm</span>
                             </div>
 
-                            <div style="display: flex; gap: 0.5rem; margin-top: 0.4rem;">
-                                <button id="btn-gravity-drop" class="btn btn-secondary" style="flex: 1; padding: 0.4rem 0.6rem; font-size: 0.75rem;">
-                                    <svg viewBox="0 0 24 24"><polyline points="7 13 12 18 17 13"></polyline><line x1="12" y1="18" x2="12" y2="6"></line></svg>
+                            <div>
+                                <button type="button" id="btn-gravity-drop" class="btn btn-secondary">
+                                    <svg aria-hidden="true" viewBox="0 0 24 24"><polyline points="7 13 12 18 17 13"></polyline><line x1="12" y1="18" x2="12" y2="6"></line></svg>
                                     一键落底
                                 </button>
-                                <button id="btn-delete-placed" class="btn btn-danger" style="flex: 1; padding: 0.4rem 0.6rem; font-size: 0.75rem;">
-                                    <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                                <button type="button" id="btn-delete-placed" class="btn btn-danger">
+                                    <svg aria-hidden="true" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
                                     移出容器
                                 </button>
                             </div>
 
-                            <div style="margin-top: 0.4rem; display: flex; flex-direction: column; gap: 0.4rem;">
-                                <span style="font-size: 0.75rem; color: var(--text-secondary);">旋转朝向切换：</span>
+                            <div>
+                                <span>旋转朝向切换：</span>
                                 <div class="rotation-grid">
-                                    <button class="rotation-btn" data-rot="0">W-H-D (原)</button>
-                                    <button class="rotation-btn" data-rot="1">W-D-H</button>
-                                    <button class="rotation-btn" data-rot="2">H-W-D</button>
-                                    <button class="rotation-btn" data-rot="3">H-D-W</button>
-                                    <button class="rotation-btn" data-rot="4">D-W-H</button>
-                                    <button class="rotation-btn" data-rot="5">D-H-W</button>
+                                    <button type="button" class="rotation-btn" data-rot="0">W-H-D (原)</button>
+                                    <button type="button" class="rotation-btn" data-rot="1">W-D-H</button>
+                                    <button type="button" class="rotation-btn" data-rot="2">H-W-D</button>
+                                    <button type="button" class="rotation-btn" data-rot="3">H-D-W</button>
+                                    <button type="button" class="rotation-btn" data-rot="4">D-W-H</button>
+                                    <button type="button" class="rotation-btn" data-rot="5">D-H-W</button>
                                 </div>
                             </div>
                         </div>
 
                         <!-- 摆放清单 -->
-                        <div style="margin-top: 0.5rem; display: flex; flex-direction: column; gap: 0.4rem;">
-                            <div style="font-size: 0.8rem; font-weight: 600; border-top: 1px solid rgba(255, 255, 255, 0.05); padding-top: 0.8rem;">已摆入容器清单:</div>
+                        <div>
+                            <div>已摆入容器清单:</div>
                             <div id="manual-placed-items" class="manual-items-list">
                                 <!-- 动态填充 -->
                             </div>
+                            <div class="undo-row" id="placement-undo" role="status" hidden><span>物品已移出</span><button type="button" class="btn btn-secondary" id="undo-placement-btn">撤销移出</button></div>
                         </div>
                     </div>
                 </div>
 
+            </div>
+
+            <!-- 版权页脚 -->
+            <div class="footer-note">
+                © 2026 智能3D装箱系统 / DeepMind Antigravity Team
+            </div>
+        </aside>
+
+        <!-- 右侧 3D 渲染区 -->
+        <section class="viewport-container" id="workspace" aria-label="三维工作区" tabindex="-1">
+            <div class="workspace-heading">
+                <div><h2>装箱工作区</h2><p id="workspace-status" role="status">配置产品后开始计算，或切换手动排布</p></div>
+                <span class="workspace-unit">尺寸 cm / 重量 kg</span>
+            </div>
+            <!-- 视口顶部悬浮数据看板 -->
+            <div id="viewport-stats-header">
+                <div class="v-stat-item">
+                    <span class="v-stat-label">整箱总重:</span>
+                    <span class="v-stat-value" id="v-total-weight">0.0 kg / 50.0 kg</span>
+                </div>
+                <div class="v-stat-divider"></div>
+                <div class="v-stat-item">
+                    <span class="v-stat-label">体积泡货值:</span>
+                    <span class="v-stat-value" id="v-dim-weight">0.0 kg</span>
+                </div>
+                <div class="v-stat-divider"></div>
+                <div class="v-stat-item">
+                    <span class="v-stat-label">配载明细:</span>
+                    <span class="v-stat-value" id="v-loaded-details">暂载入货物</span>
+                </div>
+            </div>
+
+            <!-- 视口操作浮动工具栏 -->
+            <div class="viewport-toolbar">
+                <div class="toolbar-group">
+                    <button type="button" id="view-reset-camera" class="toolbar-btn" title="复位摄像机视角" aria-label="复位摄像机视角">
+                        <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="M12 8l-4 4 4 4M16 12H8"></path></svg>
+                    </button>
+                </div>
+
+                <div class="toolbar-group">
+                    <!-- 网格开关 -->
+                    <button type="button" id="view-toggle-grid" class="toolbar-btn active" title="显示地面网格/轴向" aria-label="显示或隐藏地面网格与轴向" aria-pressed="true">
+                        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 3h18v18H3V3z"></path><path d="M21 9H3M21 15H3M12 3v18"></path></svg>
+                    </button>
+                    <!-- 实体线框切换 -->
+                    <button type="button" id="view-toggle-wireframe" class="toolbar-btn" title="容器线框模式切换" aria-label="切换容器线框模式" aria-pressed="false">
+                        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+                    </button>
+                    <!-- 透明度调节 -->
+                    <div>
+                        <span>外壳透明度:</span>
+                        <input type="range" id="view-opacity" aria-label="容器外壳透明度" min="0" max="100" value="25">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Three.js 挂载节点 -->
+            <div id="canvas-container"><div id="viewport-empty" class="viewport-empty"><p>先配置，再看排布</p><span>点击“开始计算智能装箱”查看三维方案</span></div></div>
                 <!-- 5. 空间利用率看板 (Dashboard) -->
-                <div class="control-group">
+                <div class="result-strip">
                     <div class="group-title">
-                        <span>空间统计与利用率 (Dashboard)</span>
-                        <svg viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>
+                        <span>装箱结果</span>
+                        <svg aria-hidden="true" viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>
                     </div>
                     <div class="utilization-panel">
                         <div class="utilization-circle-container">
-                            <svg class="circle-svg" viewBox="0 0 80 80">
+                            <svg aria-hidden="true" class="circle-svg" viewBox="0 0 80 80">
                                 <defs>
-                                    <linearGradient id="progressGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                                        <stop offset="0%" stop-color="var(--primary)" />
-                                        <stop offset="100%" stop-color="var(--secondary)" />
-                                    </linearGradient>
+
                                 </defs>
                                 <circle class="circle-bg" cx="40" cy="40" r="35"></circle>
                                 <circle class="circle-progress" id="efficiency-circle" cx="40" cy="40" r="35"></circle>
@@ -345,7 +410,7 @@
                             <div class="utilization-text" id="efficiency-val-circle">0%</div>
                         </div>
                         <div class="utilization-desc">
-                            <h4 id="efficiency-status-text">无货物</h4>
+                            <h3 id="efficiency-status-text">无货物</h3>
                             <p>装载容积利用率百分比</p>
                         </div>
                     </div>
@@ -371,7 +436,7 @@
 
                     <!-- 装箱溢出警告 -->
                     <div class="unpacked-warning" id="warning-section" style="display: none;">
-                        <svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+                        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
                         <div class="unpacked-warning-details">
                             <span class="unpacked-warning-title">装箱容量超出警告 (Items Left)</span>
                             <span id="warning-text">有 0 件物品因为空间不足或缺乏足够支撑未能装入容器。</span>
@@ -379,68 +444,15 @@
                     </div>
                 </div>
 
-            </div>
 
-            <!-- 版权页脚 -->
-            <div class="footer-note">
-                © 2026 智能3D装箱系统 | DeepMind Antigravity Team
-            </div>
-        </div>
-
-        <!-- 右侧 3D 渲染区 -->
-        <div class="viewport-container">
-            <!-- 视口顶部悬浮数据看板 -->
-            <div id="viewport-stats-header">
-                <div class="v-stat-item">
-                    <span class="v-stat-label">整箱总重:</span>
-                    <span class="v-stat-value" id="v-total-weight">0.0 kg / 50.0 kg</span>
-                </div>
-                <div class="v-stat-divider"></div>
-                <div class="v-stat-item">
-                    <span class="v-stat-label">体积泡货值:</span>
-                    <span class="v-stat-value" id="v-dim-weight">0.0 kg</span>
-                </div>
-                <div class="v-stat-divider"></div>
-                <div class="v-stat-item">
-                    <span class="v-stat-label">配载明细:</span>
-                    <span class="v-stat-value" id="v-loaded-details">暂载入货物</span>
-                </div>
-            </div>
-
-            <!-- 视口操作浮动工具栏 -->
-            <div class="viewport-toolbar">
-                <div class="toolbar-group">
-                    <button id="view-reset-camera" class="toolbar-btn" title="复位摄像机视角" aria-label="复位摄像机视角">
-                        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="M12 8l-4 4 4 4M16 12H8"></path></svg>
-                    </button>
-                </div>
-                
-                <div class="toolbar-group">
-                    <!-- 网格开关 -->
-                    <button id="view-toggle-grid" class="toolbar-btn active" title="显示地面网格/轴向" aria-label="显示或隐藏地面网格与轴向" aria-pressed="true">
-                        <svg viewBox="0 0 24 24"><path d="M3 3h18v18H3V3z"></path><path d="M21 9H3M21 15H3M12 3v18"></path></svg>
-                    </button>
-                    <!-- 实体线框切换 -->
-                    <button id="view-toggle-wireframe" class="toolbar-btn" title="容器线框模式切换" aria-label="切换容器线框模式" aria-pressed="false">
-                        <svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
-                    </button>
-                    <!-- 透明度调节 -->
-                    <div style="display: flex; align-items: center; gap: 0.4rem; padding: 0 0.5rem; border-left: 1px solid var(--panel-border);">
-                        <span style="font-size: 0.7rem; color: var(--text-secondary);">外壳透明度:</span>
-                        <input type="range" id="view-opacity" min="0" max="100" value="25" style="width: 60px; height: 3px; accent-color: var(--secondary);">
-                    </div>
-                </div>
-            </div>
-
-            <!-- Three.js 挂载节点 -->
-            <div id="canvas-container"></div>
+            <p class="viewport-hint">拖拽旋转 / 右键平移 / 滚轮缩放 / 手动模式双击选中</p>
 
             <!-- 碰撞悬浮警示条 -->
             <div id="collision-alert" class="alert-banner" style="display: none;" role="status" aria-live="polite">
-                <svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+                <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
                 <div class="alert-banner-text">检测到碰撞或溢出容器！放置无效</div>
             </div>
-        </div>
+        </section>
     </main>
 
     <!-- 弹窗提示 Modal -->
@@ -456,61 +468,62 @@
                 <!-- 动态插入提示文字 -->
             </div>
             <div class="modal-footer">
-                <button class="btn btn-primary" id="modal-close-btn" style="min-width: 80px;">确定</button>
+                <button type="button" class="btn btn-primary" id="modal-close-btn">确定</button>
             </div>
         </div>
     </div>
 
     <!-- 计算进度 Modal -->
-    <div id="loading-modal" class="modal-overlay" style="display: none; z-index: 9999;" role="dialog" aria-modal="true" aria-label="计算加载中">
-        <div class="modal-content" style="max-width: 400px; text-align: center; padding: 2.5rem 2rem;">
-            <div style="margin-bottom: 1.5rem; display: flex; justify-content: center;">
+    <div id="loading-modal" class="modal-overlay" style="display: none;" role="dialog" aria-modal="true" aria-label="计算加载中">
+        <div class="modal-content">
+            <div>
                 <div class="loading-spinner"></div>
             </div>
-            <h3 style="margin-bottom: 0.5rem; font-size: 1.2rem; color: var(--text-primary); font-weight: 600;">智能装箱计算中</h3>
-            <p style="font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 1.5rem; line-height: 1.5;">
-                正在通过多核并发计算寻找最优装箱方案...
+            <h3>智能装箱计算中</h3>
+            <p id="loading-description" role="status">
+                正在通过多核并发计算寻找可行装箱方案…
             </p>
-            <div style="background: rgba(128,128,128,0.15); border-radius: 999px; height: 6px; overflow: hidden; position: relative; width: 100%;">
-                <div id="loading-progress" style="background: var(--primary); height: 100%; width: 0%; transition: width 0.15s ease;"></div>
+            <div class="loading-track" role="progressbar" aria-label="装箱计算进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                <div id="loading-progress"></div>
             </div>
+            <button type="button" class="btn btn-secondary" id="cancel-pack-btn">取消计算</button>
         </div>
     </div>
 
     <!-- 关于系统 Modal (Bilingual About Modal) -->
-    <div id="about-modal" class="modal-overlay" style="display: none; z-index: 1001;" role="dialog" aria-modal="true" aria-labelledby="about-modal-title">
-        <div class="modal-content" style="max-width: 580px;">
+    <div id="about-modal" class="modal-overlay" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="about-modal-title">
+        <div class="modal-content">
             <div class="modal-header">
-                <div class="modal-icon" style="background: rgba(99, 102, 241, 0.15); border: 1px solid rgba(99, 102, 241, 0.3); color: var(--primary);">
-                    <svg viewBox="0 0 24 24" style="width: 1.5rem; height: 1.5rem; stroke: currentColor; fill: none; stroke-width: 2;"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+                <div class="modal-icon">
+                    <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
                 </div>
-                <h3 id="about-modal-title" style="font-size: 1.1rem; font-weight: 700; color: var(--text-primary);">关于系统 / About System</h3>
+                <h3 id="about-modal-title">关于系统 / About System</h3>
             </div>
-            
+
             <!-- 语言切换标签 -->
-            <div class="tab-container" style="margin-bottom: 0.2rem;">
-                <button id="about-tab-zh" class="tab active">
+            <div class="tab-container">
+                <button type="button" id="about-tab-zh" class="tab active">
                     简体中文
                 </button>
-                <button id="about-tab-en" class="tab">
+                <button type="button" id="about-tab-en" class="tab">
                     English
                 </button>
             </div>
-            
-            <div class="modal-body" style="max-height: 380px; overflow-y: auto; padding-right: 0.25rem; gap: 0.75rem;">
+
+            <div class="modal-body">
                 <!-- 中文内容 -->
-                <div id="about-content-zh" style="display: flex; flex-direction: column; gap: 0.75rem;">
-                    <p style="font-weight: 600; color: var(--text-primary);">3D 智能装箱模拟器 & 交互式排布系统</p>
+                <div id="about-content-zh">
+                    <p>3D 智能装箱模拟器 & 交互式排布系统</p>
                     <p>这是一个 100% 运行在客户端、支持离线的高性能 3D 装箱配载和排布规划系统，采用 Three.js 进行逼真的 3D 渲染，并借助多核 Web Workers 并发运行核心算法。</p>
-                    
-                    <div style="margin-top: 0.25rem;">
-                        <span style="font-weight: 600; color: var(--text-primary); display: block; margin-bottom: 0.25rem;">⚡ 核心功能：</span>
-                        <ul style="padding-left: 1.25rem; display: flex; flex-direction: column; gap: 0.25rem; list-style-type: disc;">
-                            <li><strong>多核并行装箱引擎</strong>：在后台拉起与您的 CPU 逻辑核心数匹配的 Web Workers（最高 8 线程）并发寻优，页面完全不卡顿。</li>
+
+                    <div>
+                        <span>核心功能：</span>
+                        <ul>
+                            <li><strong>多核并行装箱引擎</strong>：在后台拉起与您的 CPU 逻辑核心数匹配的 Web Workers（最多 4 个 Worker，并预留浏览器线程）并发寻优，保持界面可操作。</li>
                             <li><strong>混合启发式与回溯算法</strong>：基于 DFS（深度优先回溯）的 2D 划分算法与基于接触面积最大化、高度-深度评分的 3D 贪婪摆放算法相结合，并支持重力稳定性校验（底部接触面积须 &ge; 50%）。</li>
                             <li><strong>容器姿态自动优化</strong>：计算时自动尝试不同的容器倾斜/旋转朝向（如长宽高调换），找到能装入最多货物的最优摆放姿态，并在最终 3D 渲染时自动映射回您输入的原始长宽高，确保物理表现的一致性。</li>
                             <li><strong>双模式三维工作区</strong>：
-                                <ul style="padding-left: 1rem; list-style-type: circle; margin-top: 0.1rem;">
+                                <ul>
                                     <li><em>自动模式</em>：提供带时间轴进度条的分步动画回放，清晰查看装箱顺序。</li>
                                     <li><em>手动模式</em>：使用 3D Gizmo 控制器自由拖拽、旋转货物，具备 1cm 网格吸附、重力下落辅助、实时碰撞与溢出检测。</li>
                                 </ul>
@@ -518,10 +531,10 @@
                             <li><strong>现代视觉与无障碍</strong>：完美支持日间/夜间双主题，高对比度设计，界面顺滑且符合 Web WCAG 视觉标准。</li>
                         </ul>
                     </div>
-                    
-                    <div style="margin-top: 0.25rem; background: var(--modal-list-bg); border: 1px solid var(--panel-border); border-radius: 8px; padding: 0.75rem; font-size: 0.8rem; line-height: 1.4;">
-                        <span style="font-weight: 600; color: var(--text-primary); display: block; margin-bottom: 0.2rem;">📐 核心计算公式：</span>
-                        <div style="margin-bottom: 0.4rem;">
+
+                    <div>
+                        <span>核心计算公式：</span>
+                        <div>
                             <strong>计费体积重量 (Dimensional Weight)：</strong><br>
                             计费体积重量 (kg) = (长(cm) × 宽(cm) × 高(cm)) / 泡货系数
                         </div>
@@ -531,31 +544,31 @@
                         </div>
                     </div>
                 </div>
-                
+
                 <!-- 英文内容 -->
-                <div id="about-content-en" style="display: none; flex-direction: column; gap: 0.75rem;">
-                    <p style="font-weight: 600; color: var(--text-primary);">3D Packing Simulator & Interactive Layout System</p>
+                <div id="about-content-en" style="display: none;">
+                    <p>3D Packing Simulator & Interactive Layout System</p>
                     <p>A high-performance, client-side 3D bin packing visualization system built using Three.js and parallel multi-core Web Workers. It runs 100% offline in your browser without any backend dependencies.</p>
-                    
-                    <div style="margin-top: 0.25rem;">
-                        <span style="font-weight: 600; color: var(--text-primary); display: block; margin-bottom: 0.25rem;">⚡ Key Features:</span>
-                        <ul style="padding-left: 1.25rem; display: flex; flex-direction: column; gap: 0.25rem; list-style-type: disc;">
-                            <li><strong>Multi-Core Parallel Packer</strong>: Spawns background Web Workers mapped to your hardware threads (up to 8) to calculate packing solutions concurrently without UI freezes.</li>
+
+                    <div>
+                        <span>Key Features:</span>
+                        <ul>
+                            <li><strong>Multi-Core Parallel Packer</strong>: Spawns background Web Workers mapped to your hardware threads (up to 4, reserving a logical core for the browser) to calculate packing solutions concurrently with cancellation and bounded fallback.</li>
                             <li><strong>Hybrid Backtracking & Heuristics</strong>: Utilizes a DFS-based 2D layer backtracking solver paired with 3D multi-start greedy scoring. Validates physical placement with real-time bottom support ratio checking (&ge; 50%).</li>
                             <li><strong>Orientation Auto-Optimization</strong>: Dynamically tests alternative container aspect ratio rotations during computation under gravity limits, matching the best orientation, and transparently maps results back to your inputs for display.</li>
                             <li><strong>Dual-Mode 3D Workspace</strong>:
-                                <ul style="padding-left: 1rem; list-style-type: circle; margin-top: 0.1rem;">
+                                <ul>
                                     <li><em>Auto Mode</em>: Renders the optimal layout automatically and provides a step-by-step playback controller (Timeline Slider).</li>
                                     <li><em>Manual Mode</em>: Drag, drop and rotate items manually using 3D Transform Gizmos with 1cm snapping, gravity drop, and live collision/overflow checking.</li>
                                 </ul>
                             </li>
-                            <li><strong>Premium Aesthetics & Contrast</strong>: Fully responsive glassmorphism interface with high contrast Day/Night theme toggles conforming to accessibility principles.</li>
+                            <li><strong>Interface & Contrast</strong>: Responsive workbench interface with high contrast Day/Night theme toggles conforming to accessibility principles.</li>
                         </ul>
                     </div>
-                    
-                    <div style="margin-top: 0.25rem; background: var(--modal-list-bg); border: 1px solid var(--panel-border); border-radius: 8px; padding: 0.75rem; font-size: 0.8rem; line-height: 1.4;">
-                        <span style="font-weight: 600; color: var(--text-primary); display: block; margin-bottom: 0.2rem;">📐 Core Formulas:</span>
-                        <div style="margin-bottom: 0.4rem;">
+
+                    <div>
+                        <span>Core Formulas:</span>
+                        <div>
                             <strong>Dimensional Weight:</strong><br>
                             Dimensional Weight (kg) = (L(cm) × W(cm) × H(cm)) / Volumetric Divisor
                         </div>
@@ -566,17 +579,17 @@
                     </div>
                 </div>
             </div>
-            
-            <div class="modal-footer" style="gap: 0.75rem;">
-                <button class="btn btn-secondary" id="about-tour-btn" style="min-width: 80px; display: flex; align-items: center; gap: 0.25rem; font-size: 0.8rem; padding: 0.5rem 0.75rem; border-color: var(--secondary); color: var(--secondary);">
-                    <svg viewBox="0 0 24 24" style="width: 0.95rem; height: 0.95rem; stroke: currentColor; fill: none; stroke-width: 2;"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" id="about-tour-btn">
+                    <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
                     使用指南 / User Guide
                 </button>
-                <button class="btn btn-secondary" id="about-github-btn" style="min-width: 80px; display: flex; align-items: center; gap: 0.25rem; font-size: 0.8rem; padding: 0.5rem 0.75rem;">
-                    <svg viewBox="0 0 24 24" style="width: 0.9rem; height: 0.9rem; fill: currentColor;"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+                <button type="button" class="btn btn-secondary" id="about-github-btn">
+                    <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
                     GitHub
                 </button>
-                <button class="btn btn-primary" id="about-close-btn" style="min-width: 80px; font-size: 0.8rem; padding: 0.5rem 0.75rem;">关闭 / Close</button>
+                <button type="button" class="btn btn-primary" id="about-close-btn">关闭 / Close</button>
             </div>
         </div>
     </div>
@@ -589,21 +602,23 @@
                 <span id="tour-step-badge" class="tour-step-badge">步骤 1 / 7 (Step 1 / 7)</span>
             </div>
             <div class="tour-tooltip-body">
-                <h4 id="tour-step-title" class="tour-step-title">欢迎使用</h4>
+                <h3 id="tour-step-title" class="tour-step-title">欢迎使用</h3>
                 <div id="tour-step-desc" class="tour-step-desc">系统导览介绍</div>
             </div>
             <div class="tour-tooltip-footer">
-                <button id="tour-skip-btn" class="btn btn-secondary tour-btn-small">跳过 / Skip</button>
-                <div style="display: flex; gap: 0.4rem;">
-                    <button id="tour-back-btn" class="btn btn-secondary tour-btn-small" style="display: none;">上一步 / Back</button>
-                    <button id="tour-next-btn" class="btn btn-primary tour-btn-small">下一步 / Next</button>
+                <button type="button" id="tour-skip-btn" class="btn btn-secondary tour-btn-small">跳过 / Skip</button>
+                <div>
+                    <button type="button" id="tour-back-btn" class="btn btn-secondary tour-btn-small" style="display: none;">上一步 / Back</button>
+                    <button type="button" id="tour-next-btn" class="btn btn-primary tour-btn-small">下一步 / Next</button>
                 </div>
             </div>
         </div>
     </div>
 
     <!-- 按序载入本地算法库与应用控制器 -->
-    <script src="./packer.js"></script>
-    <script src="./app.js"></script>
+    <script src="./packer.js" defer></script>
+    <script src="./cargo.js" defer></script>
+    <script src="./packing-jobs.js" defer></script>
+    <script src="./app.js" defer></script>
 </body>
 </html>

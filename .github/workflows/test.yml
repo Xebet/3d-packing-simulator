@@ -18,3 +18,7 @@ jobs:
           node-version: 22
       - run: npm test
       - run: npm run check
+      - run: npm install --no-save --package-lock=false puppeteer-core@25.16.0
+      - run: npm run test:browser
+        env:
+          CHROME_PATH: /usr/bin/google-chrome

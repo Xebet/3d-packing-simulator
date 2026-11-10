@@ -1,11 +1,12 @@
 {
   "name": "3d-packing-simulator",
-  "version": "2.4.0",
+  "version": "2.5.0",
   "private": true,
   "description": "Client-side 3D bin packing simulator and visualizer",
   "scripts": {
-    "check": "node --check packer.js && node --check app.js",
-    "test": "node --test tests/*.test.js"
+    "check": "node --check packer.js && node --check cargo.js && node --check packing-jobs.js && node --check app.js",
+    "test": "node --test tests/*.test.js",
+    "test:browser": "node tests/browser.cjs"
   },
   "engines": {
     "node": ">=20"

@@ -74,3 +74,30 @@ test('representative 49-item layout remains valid', () => {
     assert.equal(packer.items.length, 49);
     assert.equal(validation.valid, true, JSON.stringify(validation.errors));
 });
+
+test('layer search rejects extreme layer counts instead of recursing on the UI thread', () => {
+    const packer = new Packer(10, 10, 500);
+    const start = performance.now();
+    assert.equal(packer.tryLayerBacktrackingPack([new Item('tiny', 'Tiny', 0.01, 0.01, 0.01)], true, 0.5), null);
+    assert.deepEqual(packer.getPartitions([], 50000, 10, 10), []);
+    assert.ok(performance.now() - start < 500);
+});
+test('layout validation rejects invalid containers, missing geometry and duplicate ids', () => {
+    const a = new Item('same', 'A', 1, 1, 1), b = new Item('same', 'B', 1, 1, 1);
+    b.x = 1;
+    assert.equal(Packer.validatePackingResult([a], NaN, 2, 2).valid, false);
+    assert.equal(Packer.validatePackingResult([null], 2, 2, 2).valid, false);
+    assert.equal(Packer.validatePackingResult([a, b], 2, 2, 2).valid, false);
+    assert.throws(() => new Packer(2, 2, 2).pack([a, b]));
+});
+test('nearly equal layer dimensions never create overlapping layers', () => {
+    const input = [new Item('a', 'A', 2, 2, 2), new Item('b', 'B', 2.08, 2.08, 2.08)];
+    const result = new Packer(4, 4, 4.08).tryLayerBacktrackingPack(input, false, 0.5);
+    assert.equal(result, null);
+});
+test('time-limited greedy search accounts for every item even when stopped', () => {
+    const items = Array.from({ length: 100 }, (_, i) => new Item(String(i), 'A', 1, 1, 1));
+    const result = new Packer(10, 10, 10).runGreedyPackTrials(items, { timeBudgetMs: -1 }, 0, 1);
+    assert.equal(result.items.length + result.unpacked.length, 100);
+    assert.equal(Packer.validatePackingResult(result.items, 10, 10, 10).valid, true);
+});

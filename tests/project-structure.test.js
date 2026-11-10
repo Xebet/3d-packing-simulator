@@ -16,10 +16,13 @@ test('offline runtime dependencies are present and referenced locally', () => {
     assert.doesNotMatch(html, /<script[^>]+src=["']https?:\/\//i);
 });
 
-test('worker jobs receive the biggerFirst option in both strategies', () => {
-    const app = fs.readFileSync(path.join(root, 'app.js'), 'utf8');
-    const forwardedOptions = app.match(/options:\s*\{\s*checkStability,\s*supportRatio,\s*biggerFirst/g) || [];
-    assert.equal(forwardedOptions.length, 2);
+test('offline application blocks remote requests, inline scripts and embedded objects', () => {
+    const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+    assert.match(html, /script-src 'self'/);
+    assert.match(html, /connect-src 'none'/);
+    assert.match(html, /object-src 'none'/);
+    assert.doesNotMatch(html, /\son\w+\s*=/i);
+    assert.doesNotMatch(html, /<script(?![^>]*src=)[^>]*>/i);
 });
 
 test('repository includes project and third-party license files', () => {

@@ -1,0 +1,25 @@
+[
+ {
+  "mode": "redesign",
+  "depth": "full",
+  "scope": "app",
+  "shape": "app screen",
+  "theme": "Console",
+  "axes": "dark/grotesk-sans/chromatic-amber",
+  "nav": "kept compact toolbar",
+  "footer": "kept attribution",
+  "imagery": "real interactive WebGL",
+  "photos": [],
+  "entry": "configured container",
+  "fingerprint": "split configuration and viewport, inline result strip",
+  "sections": [
+   "configuration",
+   "live viewport",
+   "results"
+  ],
+  "signature": "upright 3D packing viewport",
+  "waived": [],
+  "prompt": "Refactor offline 3D packing logic and workbench with ponytail and hallmark",
+  "date": "2026-11-10"
+ }
+]
