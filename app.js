@@ -1740,19 +1740,21 @@ window.onload = () => {
         closeOverlay('warning-modal');
     });
 
-    const themeToggleBtn = document.getElementById('theme-toggle');
+    const themeSelect = document.getElementById('theme-toggle');
     const syncTheme = () => {
-        const isLight = document.documentElement.classList.contains('light-theme');
-        document.getElementById('theme-text').textContent = isLight ? '夜间模式' : '日间模式';
-        themeToggleBtn.setAttribute('aria-pressed', String(isLight));
+        applyTheme();
+        themeSelect.value = themeMode;
         document.querySelector('meta[name="theme-color"]').content = sceneColor('background');
         syncThreeTheme();
     };
     syncTheme();
-    themeToggleBtn.addEventListener('click', () => {
-        document.documentElement.classList.toggle('light-theme');
-        writePreference('packing_theme', document.documentElement.classList.contains('light-theme') ? 'light' : 'dark');
+    themeSelect.addEventListener('change', () => {
+        themeMode = themeSelect.value;
+        writePreference('packing_theme_mode', themeMode);
         syncTheme();
+    });
+    systemThemeQuery.addEventListener('change', () => {
+        if (themeMode === 'system') syncTheme();
     });
 
     // G. 绑定智能配载数量计算器 (v2.0)

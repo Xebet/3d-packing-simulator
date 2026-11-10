@@ -24,6 +24,8 @@ async function main() {
     try {
         const page = await browser.newPage();
         await page.setViewport({ width: 1440, height: 900 });
+        await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: 'light' }]);
+        await page.evaluateOnNewDocument(() => localStorage.setItem('packing_theme', 'dark'));
         const errors = [], remote = [];
         page.on('pageerror', error => errors.push(error.message));
         page.on('request', request => { if (/^https?:/.test(request.url())) remote.push(request.url()); });
@@ -33,7 +35,7 @@ async function main() {
         assert.equal(await page.$eval('#tour-overlay', el => getComputedStyle(el).display), 'none');
         assert.deepEqual(errors, []);
         assert.equal(await page.$eval('html', el => el.classList.contains('light-theme')), true);
-        assert.equal(await page.$eval('#theme-text', el => el.textContent), '夜间模式');
+        assert.equal(await page.$eval('#theme-toggle', el => el.value), 'system');
         console.log('PASS offline startup and unobstructed workbench');
         await page.$eval('.delete-item-btn', el => el.click());
         assert.equal(await page.evaluate(() => inventory.length), 2);
@@ -144,15 +146,36 @@ async function main() {
         assert.equal(await page.$eval('main', el => el.inert), false);
         console.log('PASS untrusted error text is escaped and dialogs contain keyboard focus');
 
-        await page.click('#theme-toggle');
-        assert.equal(await page.$eval('html', el => el.classList.contains('light-theme')), false);
+        const assertTheme = async light => {
+            await page.waitForFunction(light => document.documentElement.classList.contains('light-theme') === light, {}, light);
+            assert.equal(await page.evaluate(() => '#' + scene.background.getHexString()), await page.evaluate(() => sceneColor('background')));
+            assert.equal(await page.$eval('meta[name="theme-color"]', el => el.content), await page.evaluate(() => sceneColor('background')));
+        };
+        await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: 'dark' }]);
+        await assertTheme(false);
+        await page.select('#theme-toggle', 'light');
+        await assertTheme(true);
         await page.reload({ waitUntil: 'load' });
-        assert.equal(await page.$eval('html', el => el.classList.contains('light-theme')), false);
+        await assertTheme(true);
+        assert.equal(await page.$eval('#theme-toggle', el => el.value), 'light');
+        await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: 'light' }]);
+        await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: 'dark' }]);
+        await assertTheme(true);
+        await page.select('#theme-toggle', 'dark');
+        await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: 'light' }]);
+        await page.reload({ waitUntil: 'load' });
+        await assertTheme(false);
+        assert.equal(await page.$eval('#theme-toggle', el => el.value), 'dark');
         if (process.env.BROWSER_ARTIFACT_DIR) await page.screenshot({ path: path.join(process.env.BROWSER_ARTIFACT_DIR, 'packing-dark.png'), fullPage: true });
-        await page.click('#theme-toggle');
+        await page.select('#theme-toggle', 'system');
+        await assertTheme(true);
+        await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: 'dark' }]);
         await page.reload({ waitUntil: 'load' });
-        assert.equal(await page.$eval('html', el => el.classList.contains('light-theme')), true);
-        console.log('PASS light is the default and both theme preferences survive reload');
+        await assertTheme(false);
+        assert.equal(await page.$eval('#theme-toggle', el => el.value), 'system');
+        await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: 'light' }]);
+        await assertTheme(true);
+        console.log('PASS system theme updates the UI and 3D scene live; explicit overrides and system mode survive reload');
 
         for (const width of [320, 375, 768, 1024, 1440, 1920]) {
             await page.setViewport({ width, height: 900 });
@@ -231,6 +254,7 @@ async function main() {
 
         const noWebGL = await browser.newPage();
         await noWebGL.setViewport({ width: 1440, height: 900 });
+        await noWebGL.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: 'dark' }]);
         await noWebGL.evaluateOnNewDocument(() => {
             const original = HTMLCanvasElement.prototype.getContext;
             HTMLCanvasElement.prototype.getContext = function(type, ...args) {
@@ -240,7 +264,8 @@ async function main() {
             Object.defineProperty(window, 'localStorage', { get() { throw new DOMException('Disabled', 'SecurityError'); } });
         });
         await noWebGL.goto(url, { waitUntil: 'load' });
-        assert.equal(await noWebGL.$eval('html', el => el.classList.contains('light-theme')), true);
+        assert.equal(await noWebGL.$eval('html', el => el.classList.contains('light-theme')), false);
+        assert.equal(await noWebGL.$eval('#theme-toggle', el => el.value), 'system');
         assert.equal(await noWebGL.$eval('#run-pack-btn', el => el.disabled), true);
         assert.match(await noWebGL.$eval('#viewport-empty', el => el.textContent), /无法启动/);
         await noWebGL.click('#about-toggle');

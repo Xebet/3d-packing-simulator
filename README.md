@@ -28,7 +28,7 @@ A high-performance, responsive 3D bin packing visualization system built using T
 * **Manual Mode**: Drag-and-drop items manually using standard 3D Transform Controls (Gizmos). Features auto snap-to-grid (1cm), gravity drop helper, and real-time collision detection (highlighting overlapping boxes in red).
 
 ### 4. Workbench & Accessibility
-* Supports seamless Day/Night theme toggles.
+* Follows the system theme by default and updates live. Choose Light, Dark, or System from the theme selector; the choice survives reloads.
 * Responsive configuration disclosure, visible keyboard focus, keyboard tabs, modal focus containment, and reduced-motion support.
 * Auto/manual layouts survive mode switches. Product deletion and manual removal offer Undo for 10 seconds.
 
