@@ -1,12 +1,13 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" class="light-theme">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>3D 智能装箱模拟器 & 交互式排布系统</title>
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; worker-src blob:; img-src 'self' data:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
     <meta name="referrer" content="no-referrer">
-    <meta name="theme-color" content="#151b20">
+    <meta name="theme-color" content="#e8eef1">
+    <script src="./theme.js"></script>
     <link rel="stylesheet" href="./style.css">
     <meta name="description" content="免费在线 3D 智能装箱模拟器，支持多核并行计算、自动/手动双模式装箱、Three.js 实时 3D 渲染与碰撞检测。100% 离线可用，无需安装。">
     <meta name="keywords" content="3D装箱,bin packing,装箱模拟器,packing simulator,Three.js,Web Workers">
@@ -45,7 +46,7 @@
             </button>
             <button type="button" id="theme-toggle" class="btn btn-secondary">
                 <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
-                <span id="theme-text">日间模式</span>
+                <span id="theme-text">夜间模式</span>
             </button>
 
         </div>

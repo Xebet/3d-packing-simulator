@@ -4,7 +4,7 @@
   "private": true,
   "description": "Client-side 3D bin packing simulator and visualizer",
   "scripts": {
-    "check": "node --check packer.js && node --check cargo.js && node --check packing-jobs.js && node --check app.js",
+    "check": "node --check theme.js && node --check packer.js && node --check cargo.js && node --check packing-jobs.js && node --check app.js",
     "test": "node --test tests/*.test.js",
     "test:browser": "node tests/browser.cjs",
     "test:random": "node tests/randomized.cjs"

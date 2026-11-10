@@ -105,7 +105,9 @@ function openOverlay(id) {
     modal.style.display = id === 'tour-overlay' ? 'block' : 'flex';
     document.querySelector('header').inert = true;
     document.querySelector('main').inert = true;
-    requestAnimationFrame(() => modal.querySelector('button:not([disabled])')?.focus());
+    requestAnimationFrame(() => {
+        if (currentOverlay === id) modal.querySelector('button:not([disabled])')?.focus();
+    });
 }
 function closeOverlay(id) {
     const modal = document.getElementById(id);
@@ -758,7 +760,11 @@ async function calculatePacking(explore = false) {
     alternativeButton.disabled = true;
     document.getElementById('restore-best-btn').disabled = true;
     (explore ? alternativeButton : button).setAttribute('aria-busy', 'true');
-    openOverlay('loading-modal');
+    setWorkspaceStatus(explore ? '正在搜索其他方案，原布局已保留' : '正在计算装箱方案');
+    document.getElementById('loading-progress').style.transform = 'scaleX(0)';
+    document.querySelector('.loading-track').setAttribute('aria-valuenow', '0');
+    // Fast searches should finish without flashing a full-screen scrim.
+    const loadingTimer = setTimeout(() => openOverlay('loading-modal'), 300);
     try {
         const result = await performParallelPacking(itemsToPack, binW, binH, binL, {
             checkStability, supportRatio: 0.5, biggerFirst, seed: packingSeed, explore,
@@ -806,6 +812,7 @@ async function calculatePacking(explore = false) {
             showWarningModal('error', '计算未完成', error.message, '请减少数量或检查浏览器设置后重试。');
         } else setWorkspaceStatus('计算已取消，可以调整参数后重试');
     } finally {
+        clearTimeout(loadingTimer);
         if (packingController === controller) packingController = null;
         closeOverlay('loading-modal');
         button.disabled = false;
@@ -1734,18 +1741,17 @@ window.onload = () => {
     });
 
     const themeToggleBtn = document.getElementById('theme-toggle');
-    const storedTheme = readPreference('packing_theme');
-    if (storedTheme === 'light') document.body.classList.add('light-theme');
     const syncTheme = () => {
-        const isLight = document.body.classList.contains('light-theme');
+        const isLight = document.documentElement.classList.contains('light-theme');
         document.getElementById('theme-text').textContent = isLight ? '夜间模式' : '日间模式';
         themeToggleBtn.setAttribute('aria-pressed', String(isLight));
+        document.querySelector('meta[name="theme-color"]').content = sceneColor('background');
         syncThreeTheme();
     };
     syncTheme();
     themeToggleBtn.addEventListener('click', () => {
-        document.body.classList.toggle('light-theme');
-        writePreference('packing_theme', document.body.classList.contains('light-theme') ? 'light' : 'dark');
+        document.documentElement.classList.toggle('light-theme');
+        writePreference('packing_theme', document.documentElement.classList.contains('light-theme') ? 'light' : 'dark');
         syncTheme();
     });
 

@@ -32,6 +32,8 @@ async function main() {
         await page.waitForSelector('#canvas-container canvas');
         assert.equal(await page.$eval('#tour-overlay', el => getComputedStyle(el).display), 'none');
         assert.deepEqual(errors, []);
+        assert.equal(await page.$eval('html', el => el.classList.contains('light-theme')), true);
+        assert.equal(await page.$eval('#theme-text', el => el.textContent), '夜间模式');
         console.log('PASS offline startup and unobstructed workbench');
         await page.$eval('.delete-item-btn', el => el.click());
         assert.equal(await page.evaluate(() => inventory.length), 2);
@@ -52,6 +54,7 @@ async function main() {
         });
         await page.click('#run-pack-btn');
         await page.waitForFunction(() => document.getElementById('run-pack-btn').disabled);
+        await page.waitForSelector('#loading-modal', { visible: true });
         await page.click('#cancel-pack-btn');
         await page.waitForFunction(() => !document.getElementById('run-pack-btn').disabled);
         assert.match(await page.$eval('#workspace-status', el => el.textContent), /取消/);
@@ -65,9 +68,26 @@ async function main() {
         assert.equal(await page.evaluate(() => Packer.validatePackingResult(autoPackedItems, 40, 50, 60).valid), true);
         if (process.env.BROWSER_ARTIFACT_DIR) {
             mkdirSync(process.env.BROWSER_ARTIFACT_DIR, { recursive: true });
-            await page.screenshot({ path: path.join(process.env.BROWSER_ARTIFACT_DIR, 'packing-dark.png'), fullPage: true });
+            await page.screenshot({ path: path.join(process.env.BROWSER_ARTIFACT_DIR, 'packing-light.png'), fullPage: true });
         }
         console.log('PASS real Blob Workers pack and validate the preset');
+        const fastSearch = await page.evaluate(async () => {
+            const original = performParallelPacking;
+            const modal = document.getElementById('loading-modal');
+            let openings = 0;
+            const observer = new MutationObserver(() => { if (modal.style.display !== 'none') openings++; });
+            observer.observe(modal, { attributes: true, attributeFilter: ['style'] });
+            const signature = Packer.layoutSignature(autoPackedItems);
+            try {
+                performParallelPacking = async () => ({ noAlternative: true });
+                await calculatePacking(true);
+                await new Promise(resolve => setTimeout(resolve, 350));
+                return { openings, preserved: signature === Packer.layoutSignature(autoPackedItems),
+                    inert: document.querySelector('main').inert };
+            } finally { performParallelPacking = original; observer.disconnect(); }
+        });
+        assert.deepEqual(fastSearch, { openings: 0, preserved: true, inert: false });
+        console.log('PASS fast searches never flash the overlay or leave a pending loading timer');
         const firstSignature = await page.evaluate(() => Packer.layoutSignature(autoPackedItems));
         const firstBest = await page.evaluate(() => Packer.packingMetrics(bestAutoResult.items));
         await page.evaluate(() => {
@@ -75,6 +95,7 @@ async function main() {
             PackingJobs.createWorker = () => ({ postMessage() {}, terminate() {} });
         });
         await page.click('#alternative-pack-btn');
+        await page.waitForSelector('#loading-modal', { visible: true });
         await page.click('#cancel-pack-btn');
         await page.waitForFunction(() => !document.getElementById('run-pack-btn').disabled);
         assert.equal(await page.evaluate(() => Packer.layoutSignature(autoPackedItems)), firstSignature);
@@ -124,11 +145,14 @@ async function main() {
         console.log('PASS untrusted error text is escaped and dialogs contain keyboard focus');
 
         await page.click('#theme-toggle');
-        assert.equal(await page.$eval('body', el => el.classList.contains('light-theme')), true);
+        assert.equal(await page.$eval('html', el => el.classList.contains('light-theme')), false);
         await page.reload({ waitUntil: 'load' });
-        assert.equal(await page.$eval('body', el => el.classList.contains('light-theme')), true);
-        console.log('PASS theme preference survives reload');
-        if (process.env.BROWSER_ARTIFACT_DIR) await page.screenshot({ path: path.join(process.env.BROWSER_ARTIFACT_DIR, 'packing-light.png'), fullPage: true });
+        assert.equal(await page.$eval('html', el => el.classList.contains('light-theme')), false);
+        if (process.env.BROWSER_ARTIFACT_DIR) await page.screenshot({ path: path.join(process.env.BROWSER_ARTIFACT_DIR, 'packing-dark.png'), fullPage: true });
+        await page.click('#theme-toggle');
+        await page.reload({ waitUntil: 'load' });
+        assert.equal(await page.$eval('html', el => el.classList.contains('light-theme')), true);
+        console.log('PASS light is the default and both theme preferences survive reload');
 
         for (const width of [320, 375, 768, 1024, 1440, 1920]) {
             await page.setViewport({ width, height: 900 });
@@ -216,6 +240,7 @@ async function main() {
             Object.defineProperty(window, 'localStorage', { get() { throw new DOMException('Disabled', 'SecurityError'); } });
         });
         await noWebGL.goto(url, { waitUntil: 'load' });
+        assert.equal(await noWebGL.$eval('html', el => el.classList.contains('light-theme')), true);
         assert.equal(await noWebGL.$eval('#run-pack-btn', el => el.disabled), true);
         assert.match(await noWebGL.$eval('#viewport-empty', el => el.textContent), /无法启动/);
         await noWebGL.click('#about-toggle');

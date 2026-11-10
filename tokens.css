@@ -28,7 +28,7 @@
   --input-border: oklch(58% 0.012 250);
 }
 
-body.light-theme {
+.light-theme {
   color-scheme: light;
   --color-paper: oklch(96% 0.008 250); --color-paper-2: oklch(99% 0.005 250); --color-paper-3: oklch(93% 0.012 250);
   --color-ink: oklch(23% 0.02 250); --color-ink-2: oklch(38% 0.02 250); --color-muted: oklch(45% 0.02 250);
