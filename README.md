@@ -1,67 +1,68 @@
-# 3D Packing Simulator & Interactive Layout System
+# 3D 智能装箱模拟器与交互式排布系统
 
-[简体中文](README_ZH.md) | English
+**简体中文** | [English](README_EN.md)
 
-A high-performance, responsive 3D bin packing visualization system built using Three.js and parallel multi-core Web Workers. It runs 100% client-side, keeps its runtime dependencies in the repository for offline use, and is ready for cloud deployment via GitHub Pages.
+这是一个基于 Three.js 和多核并行 Web Workers 的高性能、响应式 3D 智能装箱排布与可视化系统。系统采用 100% 纯前端架构，运行依赖已经固定并保存在仓库中，支持真正离线运行，也兼容 GitHub Pages 静态托管发布。
 
 ---
 
-## 🌐 Live Demo
+## 🌐 在线演示
 * **GitHub Pages**: [https://Xebet.github.io/3d-packing-simulator/](https://Xebet.github.io/3d-packing-simulator/)
 
 ---
 
-## ⚡ Key Features
+## ⚡ 核心特性
 
-### 1. Multi-Core Asynchronous Parallel Packer
-* **Background Workers**: Calculation is offloaded to background `Web Workers` spawned dynamically according to `navigator.hardwareConcurrency` (up to 8 workers, leaving a logical core available for the browser).
-* **Fully Responsive UI**: Search runs in cancellable background jobs. Worker creation failures use two short, time-limited main-thread trials; search depth can be lower in that mode.
-* **CPU Maximization**: Utilizes multi-core CPUs to run greedy strategies in parallel after a bounded layer-search phase.
+### 1. 多核异步并行装箱
+* **后台并发计算**：根据用户 CPU 线程数（通过 `navigator.hardwareConcurrency` 动态识别，最多 8 个 Worker，并为浏览器预留一个逻辑核心）启动后台并行 Web Workers，把装箱耗时工作移出主线程。
+* **高响应性交互**：后台任务支持取消，并清理线程和计时器。线程不可用时运行两次短时限基础策略，此时搜索深度较低。
+* **进度条反馈**：优雅展示计算进度，并在计算完成后自动关闭。
 
-### 2. High-Performance Packing Engine
-* **Layer Backtracking Solver (DFS)**: Slices the container along shared dimension axes to solve as a 2D grid using DFS backtracking. Perfect for highly-constrained scenarios (e.g. perfectly packing the extreme 49-item set).
-* **Multi-Start Heuristics**: Evaluates placements using contact area maximization and height-depth lexicographical scoring to minimize centers of gravity and reduce voids.
-* **Stability Check**: Real-time 3D bottom support ratio validation (requiring at least 50% surface contact) ensures physically stable stacking.
+### 2. 高性能装箱算法引擎
+* **分层回溯求解器 (DFS)**：自动分析公维特征，将 3D 空间切片降维为 2D 拼图，利用带稳定性检查的深度优先搜索（DFS）回溯，解决贪心算法容易漏装的极限装载难题（如完美装入极限 49 件套）。
+* **多策略贪心试错**：结合空间接触面积最大化及高度深度词典序评分，强力压低重心、消灭空洞。
+* **重力稳定性校验**：实时对摆放的箱子进行底部支撑面计算（必须满足至少 50% 面积接触），筛除支撑面积不足的布局。
 
-### 3. Dual-Mode Interactive 3D Workspace
-* **Auto Mode**: Renders the optimal layout automatically and provides a step-by-step playback controller (Timeline Slider).
-* **Manual Mode**: Drag-and-drop items manually using standard 3D Transform Controls (Gizmos). Features auto snap-to-grid (1cm), gravity drop helper, and real-time collision detection (highlighting overlapping boxes in red).
+### 3. 双模式交互式 3D 工作区
+* **自动模式**：一键计算完成自动装箱，提供时间轴控制器进行步骤动画分步演示。
+* **手动模式**：双击选择物体，通过 3D 拖拽手柄（Gizmo）自由移动。支持 1cm 自动网格吸附、一键重力落底（落到底部或其他物品顶面）以及红光碰撞/溢出边界警示。
 
-### 4. Workbench & Accessibility
-* Follows the system theme by default and updates live. Choose Light, Dark, or System from the theme selector; the choice survives reloads.
-* Responsive configuration disclosure, visible keyboard focus, keyboard tabs, modal focus containment, and reduced-motion support.
-* Auto/manual layouts survive mode switches. Product deletion and manual removal offer Undo for 10 seconds.
-
----
-
-## 📂 Project Architecture
-
-* `index.html`: The UI skeleton and layout.
-* `style.css`: Modern visual styles, animations, responsive workbench layout.
-* `cargo.js`: Pure inventory validation and weight/volume quantity allocation.
-* `packing-jobs.js`: Cancellable worker jobs, bounded fallback, and result validation.
-* `tokens.css` / `base.css`: Offline light/dark design tokens and shared accessible defaults.
-* `packer.js`: Core algorithmic module including `Item`, `Packer`, and 2D backtracking solver.
-* `app.js`: Application controller. Manages the Three.js scene, input validation, focus, and UI lifecycle.
-* `test_suite.html`: Integrated headless-ready browser unit and integration test runner.
-* `tests/`: Node.js regression tests for the packing engine.
-* `vendor/`: Pinned Three.js runtime and controls used by the offline application.
-* `.github/workflows/test.yml`: Automated syntax and algorithm checks.
+### 4. 丰富主题与无障碍兼容
+* 主题默认跟随系统并实时响应系统变化；可手动选择浅色或深色，也可恢复跟随系统，刷新后记住选择。窄屏通过按钮展开装箱配置。
+* 自动与手动模式切换保留各自布局；删除产品、移出物品后可在 10 秒内撤销。
+* 针对日间模式进行了高对比度优化，提供可见键盘焦点、方向键切换模式、弹窗焦点限制和减少动态效果支持。
 
 ---
 
-## 🛠️ Installation & Usage
+## 📂 项目结构
 
-### Local Offline Usage
-No installation required! Since it has no backend dependencies, simply clone or download the files and double-click `index.html` to run.
+* `index.html`: 界面骨架和主页面布局。
+* `style.css`: 应用工作台布局与响应式交互样式。
+* `cargo.js`: 清单总量校验、重量与容积约束下的配载数量分配。
+* `packing-jobs.js`: 可取消的后台任务、超时回退与返回布局校验。
+* `theme.js`: 首次绘制前应用主题偏好，默认跟随系统。
+* `tokens.css` / `base.css`: 离线日夜主题令牌与共享无障碍基础样式。
+* `packer.js`: 核心算法模块（包含 `Item`、`Packer` 及 2D 回溯求解器）。
+* `app.js`: 应用程序控制器（负责 Three.js WebGL 场景生命周期、界面事件、输入校验和弹窗焦点管理）。
+* `test_suite.html`: 集成测试运行页面，可直接在浏览器端对算法执行自动测试。
+* `tests/`: 可在 Node.js 中运行的装箱算法回归测试。
+* `vendor/`: 离线运行所需的固定版本 Three.js 与控制器。
+* `.github/workflows/test.yml`: 自动语法检查与算法测试工作流。
+
+---
+
+## 🛠️ 安装与使用
+
+### 本地离线运行
+无需任何环境安装！直接克隆或下载项目文件，双击打开 `index.html` 即可运行。
 ```bash
 git clone https://github.com/Xebet/3d-packing-simulator.git
 cd 3d-packing-simulator
-# Double click index.html to run
+# 双击 index.html 直接运行
 ```
 
-### Run Tests
-Open `test_suite.html` in any browser to execute the visual test suite, or use Node.js 20+ for CI-friendly regression tests:
+### 运行集成测试
+在浏览器中打开 `test_suite.html` 可执行可视化测试，也可以使用 Node.js 20+ 运行适合 CI 的回归测试：
 
 ```bash
 npm test
@@ -70,47 +71,46 @@ npm run check
 
 ---
 
-## Explore another layout
+## 更换装箱方案
 
-After calculating, select **换一种装箱方式** to explore another packing order, orientation, and layer partition with a different seed. The page compares packed count, volume, and stack height. **恢复最佳方案** restores the best result found for the current inputs.
+计算完成后点击 **换一种装箱方式**，使用新种子探索不同的装载顺序、旋转及分层组合。界面显示每个方案的装载件数、体积和堆高；点击 **恢复最佳方案** 可回到本组数据找到的最佳结果。
 
-A different layout is not necessarily better. The best candidate ranks by packed count, then volume, then lower stack height. If the current constraints admit no new layout within the search budget, the existing layout stays visible. Editing the inputs resets the saved best result.
+最佳方案按“件数更多、同件数时体积更大、再比较堆高更低”排序。不同方案不保证更好；若预算内未找到不同有效布局，保留当前方案并说明原因。修改输入后会清除旧数据的最佳方案。
 
-## Randomized testing
+## 随机组合测试
 
-`npm run test:random` runs 219 dimension/quantity combinations across three fixed seeds and 72 alternative searches using the production worker source on real Node threads. It independently checks bounds, overlap, support, legal rotation, and item conservation. Some exact-fill fixtures have known capacity; general random cases do not claim a proven optimum.
+`npm run test:random` 使用 3 个固定种子运行 219 组尺寸/数量组合及 72 次换方案搜索，在真实 Node 线程上执行生产 Worker 源码。测试独立验证边界、碰撞、支撑、合法旋转及物品不丢失、不重复；已知铺满组合检查装载数量，一般随机组合不声称已知全局最优解。
 
-Set `PACKING_TEST_SEED` to reproduce one input set and `PACKING_TEST_REPORT` to write a JSON report. CI runs these checks and uploads `randomized-packing-report`.
+设置 `PACKING_TEST_SEED` 可复现一组输入，设置 `PACKING_TEST_REPORT` 可生成 JSON 报告。CI 会自动运行并上传 `randomized-packing-report`。
 
-See [the randomized test and performance report](docs/randomized-testing.md).
+结果及性能对照见[随机测试报告](docs/randomized-testing.md)。
 
-## Browser verification
+## 浏览器验证
 
-With Chrome and a local or global installation of `puppeteer-core`, run `npm run test:browser`. Set `CHROME_PATH` when Chrome is not in its usual location; `PUPPETEER_ROOT` can point to an existing package root. The app itself still needs no installation.
+本机安装 Chrome，且已有本地或全局 `puppeteer-core` 时，可运行 `npm run test:browser`。Chrome 不在默认位置时设置 `CHROME_PATH`；也可通过 `PUPPETEER_ROOT` 指定现有依赖目录。这些依赖仅用于测试，应用运行无需安装。
 
-## Limits and privacy
+## 使用边界与隐私
 
-- Packing is a heuristic search, not a proof of a global optimum. The full inventory is capped at 1,000 items.
-- Layer search applies to at most 128 items and 64 layers, with node and time limits. Larger inputs use the greedy search. Each worker is terminated after 15 seconds.
-- Quantity allocation uses a 75% volume estimate plus the configured weight limit, then runs the 3D solver. Geometric packing itself does not remove overweight cargo; the workspace labels excess weight.
-- A 50% overlap threshold is a geometric support rule, not a structural or load-bearing certification.
-- No remote runtime requests are needed. The page CSP blocks network connections, inline scripts, embedded objects, and form submissions. Inline styles remain enabled for the live 3D controls.
-- Only theme and guide preferences use local storage; inventory/layouts remain in the current tab. There is no server or account storage.
+- 装箱采用启发式搜索，不保证全局最优；清单合计最多 1,000 件。
+- 分层回溯最多处理 128 件、64 层，并设有节点和时间上限；更大输入使用贪心搜索。每个后台任务 15 秒超时终止。
+- 配载数量根据 75% 安全容积和承载上限估算，再交给三维算法验证。几何装箱不会自动移除超重物品，工作区会明确提示超重。
+- 50% 底面接触只是几何支撑规则，不代表实际承重、重心稳定或运输认证。
+- 页面运行不需要外部网络；内容安全策略限制联网、内联脚本、嵌入对象和表单提交。为动态三维控件保留内联样式。
+- 本地存储仅记录主题和导览偏好；产品清单和布局仅保存在当前标签页，没有服务端或账号存储。
 
-See [the optimization and review record](docs/optimization-review.md) for verified changes and remaining limits.
+验证明细及遗留限制见[优化与复查记录](docs/optimization-review.md)。
 
-## 📖 Core Algorithmic Details
+## 📖 算法数学模型
 
-### Volumetric Weight Formula
-The application automatically calculates the volumetric (dimensional) weight and compares it against actual weight:
-$$\text{Dimensional Weight (kg)} = \frac{L(\text{cm}) \times W(\text{cm}) \times H(\text{cm})}{\text{Volumetric Divisor}}$$
-If the dimensional weight is greater than the actual weight, the system highlights it to warn you of volume-based carrier billing.
+### 泡货与计费重公式
+系统会自动计算体积折合重量并与货品实际重量对比，若体积重较大，将标记提示泡货计费：
+$$\text{体积折算重 (kg)} = \frac{L(\text{cm}) \times W(\text{cm}) \times H(\text{cm})}{\text{泡货系数 (默认 8000)}}$$
 
-### Stability Check
-For any placed item $i$ at height $y > 0$, the ratio of the supported surface area is calculated by checking overlap with items directly underneath:
-$$\text{Support Ratio} = \frac{\sum \text{Area}(\text{Overlap with bottom items})}{\text{Base Area of Item } i} \ge 0.5$$
+### 重力稳定支撑校验
+对于高度 $y > 0$ 的任意已放置箱体 $i$，其底面与下方箱体顶部的重叠投影面积比例必须达标：
+$$\text{支撑面积比例} = \frac{\sum \text{底面重叠面积}}{\text{箱体 } i \text{ 的底面积}} \ge 0.5$$
 
 ---
 
-## 📜 License
-This project is open-source and available under the [MIT License](LICENSE).
+## 📜 开源协议
+本项目遵循 MIT 开源协议。
