@@ -13,6 +13,9 @@ let deletedInventory = null;
 let deletedPlacement = null;
 let inventoryUndoTimer, placementUndoTimer;
 let packingController = null;
+let bestAutoResult = null;
+let solutionAttempt = 0;
+let packingSeed = 20260617;
 
 const MAX_INVENTORY_QTY = 1000;
 const MAX_ITEM_NAME_LENGTH = 80;
@@ -30,6 +33,12 @@ function invalidateAutoLayout() {
     autoPackedItems = [];
     autoUnpackedItems = [];
     animationStep = 0;
+    bestAutoResult = null;
+    solutionAttempt = 0;
+    packingSeed = 20260617;
+    document.getElementById('alternative-pack-btn').disabled = true;
+    document.getElementById('restore-best-btn').hidden = true;
+    document.getElementById('packing-comparison').textContent = '配置已更新，请重新计算';
     document.getElementById('anim-section').style.display = 'none';
     if (activeMode === 'auto') clearRenderedBoxes();
     setWorkspaceStatus('配置已更新，请重新计算');
@@ -636,13 +645,16 @@ async function performParallelPacking(items, binW, binH, binL, options, signal) 
         const config = configs[index];
         if (seen.has(config.bin.join('|'))) continue;
         seen.add(config.bin.join('|'));
-        const result = await PackingJobs.run(items, config.bin, options, { signal, onProgress(value, label) {
+        // The saved signature is in world coordinates; mapped candidates are checked again below.
+        const runOptions = index === 0 ? options : { ...options, excludeSignature: undefined };
+        const result = await PackingJobs.run(items, config.bin, runOptions, { signal, onProgress(value, label) {
             const progress = document.getElementById('loading-progress');
             progress.style.transform = 'scaleX(' + ((index + value / 100) / configs.length) + ')';
             progress.parentElement.setAttribute('aria-valuenow', String(Math.round((index + value / 100) / configs.length * 100)));
             document.getElementById('loading-description').textContent = label + '，姿态 ' + (index + 1) + ' / ' + configs.length;
         } });
         if (signal.aborted) throw new DOMException('计算已取消', 'AbortError');
+        if (result.noAlternative) continue;
         const packed = result.items.map(item => {
             const pos = [], size = [];
             [item.x, item.y, item.z].forEach((v, i) => pos[config.perm[i]] = v);
@@ -655,15 +667,45 @@ async function performParallelPacking(items, binW, binH, binL, options, signal) 
             return mapped;
         });
         if (!Packer.validatePackingResult(packed, binW, binH, binL, options.checkStability, options.supportRatio).valid) continue;
-        const volume = packed.reduce((sum, item) => sum + item.rw * item.rh * item.rd, 0);
-        if (!best || packed.length > best.items.length || (packed.length === best.items.length && volume > best.volume)) best = { ...result, items: packed, volume };
+        if (options.excludeSignature && Packer.layoutSignature(packed) === options.excludeSignature) continue;
+        if (!best || Packer.comparePackings(packed, best.items) > 0) best = { ...result, items: packed };
         if (packed.length === items.length) break;
     }
+    if (!best && options.explore) return { noAlternative: true };
     if (!best) throw new Error('未找到有效布局，请检查配置并重试');
     return best;
 }
 
-document.getElementById('run-pack-btn').addEventListener('click', async () => {
+function displayAutoResult(result) {
+    stopAnimation();
+    autoPackedItems = result.items;
+    autoUnpackedItems = result.unpacked;
+    clearRenderedBoxes();
+    document.getElementById('anim-section').style.display = 'block';
+    const slider = document.getElementById('anim-timeline');
+    slider.max = autoPackedItems.length;
+    animationStep = autoPackedItems.length;
+    slider.value = animationStep;
+    updateStepUI();
+    updateStats();
+    showStep(animationStep);
+    const metrics = Packer.packingMetrics(autoPackedItems);
+    const best = Packer.packingMetrics(bestAutoResult.items);
+    const isBest = Packer.layoutSignature(autoPackedItems) === Packer.layoutSignature(bestAutoResult.items);
+    document.getElementById('restore-best-btn').hidden = isBest;
+    document.getElementById('packing-comparison').textContent =
+        '方案 ' + result.attempt + '，种子 ' + result.seed + '。已装 ' + metrics.count +
+        ' 件，体积 ' + (metrics.volume / 1000).toFixed(1) + ' L，堆高 ' + metrics.height.toFixed(1) +
+        ' cm。最佳：' + best.count + ' 件 / ' + (best.volume / 1000).toFixed(1) + ' L / ' + best.height.toFixed(1) + ' cm。';
+}
+document.getElementById('run-pack-btn').addEventListener('click', () => calculatePacking());
+document.getElementById('alternative-pack-btn').addEventListener('click', () => calculatePacking(true));
+document.getElementById('restore-best-btn').addEventListener('click', () => {
+    if (packingController || !bestAutoResult) return;
+    displayAutoResult(bestAutoResult);
+    setWorkspaceStatus('已恢复当前数据下找到的最佳方案');
+});
+async function calculatePacking(explore = false) {
     if (activeMode !== 'auto' || packingController) return;
     
     stopAnimation();
@@ -684,39 +726,6 @@ document.getElementById('run-pack-btn').addEventListener('click', async () => {
         return;
     }
 
-    // 1. 预先校验：是否有单个产品尺寸在任何旋转方向下都超出了箱子的尺寸
-    let oversizedItems = [];
-    inventory.filter(inv => inv.qty > 0).forEach(inv => {
-        const tempItem = new Item('temp', inv.name, inv.w, inv.h, inv.l, inv.color, inv.weight);
-        let canFitAnywhere = false;
-        for (let r = 0; r < 6; r++) {
-            const [rw, rh, rd] = tempItem.getRotatedDimensions(r);
-            if (rw <= binW && rh <= binH && rd <= binL) {
-                canFitAnywhere = true;
-                break;
-            }
-        }
-        if (!canFitAnywhere) {
-            oversizedItems.push(inv);
-        }
-    });
-
-    if (oversizedItems.length > 0) {
-        // 展示超大尺寸错误弹窗
-        const listHtml = oversizedItems.map(inv => 
-            `<li class="modal-bullet-item">${escapeHtml(inv.name)}: 尺寸 ${inv.w}x${inv.h}x${inv.l} cm (宽x高x长)</li>`
-        ).join('');
-        
-        showWarningModal(
-            'error',
-            '产品尺寸超出箱子限制',
-            `检测到以下产品即便单独摆放，其部分尺寸也已经超出了您设定的箱子尺寸 (${binW}x${binH}x${binL} cm)，物理上完全无法放入箱子中：`,
-            `请您<strong>修改该产品的长宽高尺寸</strong>使其小于箱子尺寸，或者在上方设置中<strong>增大箱子的尺寸</strong>。`,
-            listHtml
-        );
-        return; // 拦截计算
-    }
-
     const checkStability = document.getElementById('cfg-stability').checked;
     const biggerFirst = document.getElementById('cfg-bigger-first').checked;
 
@@ -735,24 +744,41 @@ document.getElementById('run-pack-btn').addEventListener('click', async () => {
         return;
     }
 
+    const previousSignature = Packer.layoutSignature(autoPackedItems);
+    const started = performance.now();
+    solutionAttempt++;
+    packingSeed = explore ? (packingSeed + 0x9e3779b9) >>> 0 : 20260617;
+
     // 3. 异步并发执行装箱
     const controller = new AbortController();
     packingController = controller;
     const button = document.getElementById('run-pack-btn');
+    const alternativeButton = document.getElementById('alternative-pack-btn');
     button.disabled = true;
-    button.setAttribute('aria-busy', 'true');
+    alternativeButton.disabled = true;
+    document.getElementById('restore-best-btn').disabled = true;
+    (explore ? alternativeButton : button).setAttribute('aria-busy', 'true');
     openOverlay('loading-modal');
     try {
-        const result = await performParallelPacking(itemsToPack, binW, binH, binL, { checkStability, supportRatio: 0.5, biggerFirst }, controller.signal);
+        const result = await performParallelPacking(itemsToPack, binW, binH, binL, {
+            checkStability, supportRatio: 0.5, biggerFirst, seed: packingSeed, explore,
+            excludeSignature: explore ? previousSignature : undefined
+        }, controller.signal);
         if (controller.signal.aborted) return;
         closeOverlay('loading-modal');
-        autoPackedItems = result.items;
-        autoUnpackedItems = result.unpacked;
-        setWorkspaceStatus(result.degraded ? '已生成基础布局，部分后台策略不可用' : '装箱完成，已校验边界、碰撞与支撑');
+        if (result.noAlternative) {
+            setWorkspaceStatus('本次搜索未找到不同的有效方案，现有布局已保留');
+            return;
+        }
+        result.attempt = solutionAttempt;
+        result.seed = packingSeed;
+        const improved = bestAutoResult && Packer.comparePackings(result.items, bestAutoResult.items) > 0;
+        if (!bestAutoResult || improved) bestAutoResult = result;
+        displayAutoResult(result);
+        const elapsed = ((performance.now() - started) / 1000).toFixed(2);
+        setWorkspaceStatus((improved ? '找到更优方案' : explore ? '已生成不同方案' : '装箱完成') +
+            '，用时 ' + elapsed + ' 秒' + (result.degraded ? '（基础搜索）' : '，已校验边界、碰撞与支撑'));
 
-        // 4. 清除并重新初始化动画渲染
-        clearRenderedBoxes();
-        
         // 5. 判断并展示货物无法完全装载弹窗
         if (autoUnpackedItems.length > 0) {
             const unpackedCountMap = new Map();
@@ -766,26 +792,13 @@ document.getElementById('run-pack-btn').addEventListener('click', async () => {
 
             showWarningModal(
                 'warning',
-                '部分货物空间不足无法装箱',
-                `由于箱内剩余容积不足，或重力支撑面要求未被满足，以下产品未能全部成功装入箱中（已成功装入 ${autoPackedItems.length} 件）：`,
+                '部分货物未能装入',
+                `由于产品尺寸超出容器、剩余空间不足或支撑要求未满足，以下产品未能全部装入（已成功装入 ${autoPackedItems.length} 件）：`,
                 `建议：您可以适当<strong>减少上述货物的装箱数量</strong>，或者在上方设置中<strong>增大箱子的长宽高尺寸</strong>。`,
                 listHtml
             );
         }
 
-        // 6. 激活分步动画控制面板
-        document.getElementById('anim-section').style.display = 'block';
-        
-        const slider = document.getElementById('anim-timeline');
-        slider.max = autoPackedItems.length;
-        
-        // 直接展示最终装载完成呈现
-        animationStep = autoPackedItems.length;
-        slider.value = animationStep;
-        
-        updateStepUI();
-        updateStats();
-        showStep(animationStep);
     } catch (error) {
         closeOverlay('loading-modal');
         if (error.name !== 'AbortError') {
@@ -797,8 +810,11 @@ document.getElementById('run-pack-btn').addEventListener('click', async () => {
         closeOverlay('loading-modal');
         button.disabled = false;
         button.removeAttribute('aria-busy');
+        alternativeButton.removeAttribute('aria-busy');
+        alternativeButton.disabled = autoPackedItems.length === 0;
+        document.getElementById('restore-best-btn').disabled = false;
     }
-});
+}
 
 // 显示全局提示弹窗
 function showWarningModal(type, title, message, suggestion, listHtml = '') {
@@ -1446,7 +1462,7 @@ function updateStats() {
     const warningSection = document.getElementById('warning-section');
     if (activeMode === 'auto' && unpackCount > 0) {
         warningSection.style.display = 'flex';
-        document.getElementById('warning-text').innerText = `共有 ${unpackCount} 件货物由于空间限制或重力支撑性校验未通过，未能成功装入。请适当调整容器尺寸或减少配置。`;
+        document.getElementById('warning-text').innerText = `共有 ${unpackCount} 件货物由于尺寸超限、空间限制或支撑性校验未通过，未能成功装入。请适当调整容器尺寸或减少配置。`;
     } else {
         warningSection.style.display = 'none';
     }

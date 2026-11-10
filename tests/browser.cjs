@@ -46,12 +46,17 @@ async function main() {
         assert.match(await page.$eval('#v-total-weight', el => el.textContent), /^0\.0 kg/);
         console.log('PASS zero empty weight is preserved');
 
+        await page.evaluate(() => {
+            window.actualWorkerFactory = PackingJobs.createWorker;
+            PackingJobs.createWorker = () => ({ postMessage() {}, terminate() {} });
+        });
         await page.click('#run-pack-btn');
         await page.waitForFunction(() => document.getElementById('run-pack-btn').disabled);
         await page.click('#cancel-pack-btn');
         await page.waitForFunction(() => !document.getElementById('run-pack-btn').disabled);
         assert.match(await page.$eval('#workspace-status', el => el.textContent), /取消/);
         assert.equal(await page.$eval('main', el => el.inert), false);
+        await page.evaluate(() => { PackingJobs.createWorker = window.actualWorkerFactory; });
         console.log('PASS cancellation restores controls and focus');
 
         await page.click('#run-pack-btn');
@@ -63,6 +68,33 @@ async function main() {
             await page.screenshot({ path: path.join(process.env.BROWSER_ARTIFACT_DIR, 'packing-dark.png'), fullPage: true });
         }
         console.log('PASS real Blob Workers pack and validate the preset');
+        const firstSignature = await page.evaluate(() => Packer.layoutSignature(autoPackedItems));
+        const firstBest = await page.evaluate(() => Packer.packingMetrics(bestAutoResult.items));
+        await page.evaluate(() => {
+            window.actualWorkerFactory = PackingJobs.createWorker;
+            PackingJobs.createWorker = () => ({ postMessage() {}, terminate() {} });
+        });
+        await page.click('#alternative-pack-btn');
+        await page.click('#cancel-pack-btn');
+        await page.waitForFunction(() => !document.getElementById('run-pack-btn').disabled);
+        assert.equal(await page.evaluate(() => Packer.layoutSignature(autoPackedItems)), firstSignature);
+        await page.evaluate(() => { PackingJobs.createWorker = window.actualWorkerFactory; });
+        await page.click('#alternative-pack-btn');
+        await page.waitForFunction(() => !document.getElementById('run-pack-btn').disabled, { timeout: 60000 });
+        assert.notEqual(await page.evaluate(() => Packer.layoutSignature(autoPackedItems)), firstSignature);
+        assert.equal(await page.evaluate(() => Packer.validatePackingResult(autoPackedItems, 40, 50, 60).valid), true);
+        assert.equal(await page.evaluate(() => bestAutoResult.items.length), firstBest.count);
+        assert.match(await page.$eval('#packing-comparison', el => el.textContent), /种子/);
+        await page.$eval('#restore-best-btn', el => el.click());
+        assert.equal(await page.evaluate(() => Packer.layoutSignature(autoPackedItems)), await page.evaluate(() => Packer.layoutSignature(bestAutoResult.items)));
+        await page.evaluate(() => {
+            const items = bestAutoResult.items.filter(item => item.y === 0);
+            displayAutoResult({ items, unpacked: bestAutoResult.items.filter(item => item.y !== 0), attempt: 0, seed: 0 });
+        });
+        assert.equal(await page.$eval('#restore-best-btn', el => el.hidden), false);
+        await page.click('#restore-best-btn');
+        assert.equal(await page.evaluate(() => Packer.layoutSignature(autoPackedItems)), await page.evaluate(() => Packer.layoutSignature(bestAutoResult.items)));
+        console.log('PASS alternate layouts differ and the best solution can be restored');
 
         await page.click('#tab-manual');
         await page.$eval('.place-one-btn', el => el.click());
@@ -134,6 +166,32 @@ async function main() {
         assert.equal(await extreme.evaluate(() => autoPackedItems.length), 49);
         assert.equal(await extreme.evaluate(() => Packer.validatePackingResult(autoPackedItems, 40, 50, 60).valid), true);
         console.log('PASS 49-item layout through the production parallel scheduler');
+        await extreme.evaluate(() => {
+            inventory = [
+                { id: 'big', name: '超大盒', l: 100, w: 100, h: 100, qty: 2, weight: 1, color: '#446688', ratio: 0, minQty: 0 },
+                { id: 'fit', name: '可装盒', l: 10, w: 10, h: 10, qty: 1, weight: 1, color: '#668844', ratio: 0, minQty: 0 }
+            ];
+            invalidateAutoLayout(); renderInventoryUI(); updateStats();
+        });
+        assert.equal(await extreme.$eval('#alternative-pack-btn', el => el.disabled), true);
+        await extreme.click('#run-pack-btn');
+        await extreme.waitForFunction(() => !document.getElementById('run-pack-btn').disabled);
+        assert.equal(await extreme.evaluate(() => autoPackedItems.length), 1);
+        assert.equal(await extreme.evaluate(() => autoUnpackedItems.length), 2);
+        console.log('PASS oversized cargo does not block fitting cargo and invalidates previous best');
+        await extreme.click('#modal-close-btn');
+        await extreme.evaluate(() => {
+            inventory = [{ id: 'exact', name: '整箱', l: 60, w: 40, h: 50, qty: 1, weight: 1, color: '#446688', ratio: 0, minQty: 0 }];
+            invalidateAutoLayout(); renderInventoryUI(); updateStats();
+        });
+        await extreme.click('#run-pack-btn');
+        await extreme.waitForFunction(() => !document.getElementById('run-pack-btn').disabled);
+        const onlyLayout = await extreme.evaluate(() => Packer.layoutSignature(autoPackedItems));
+        await extreme.click('#alternative-pack-btn');
+        await extreme.waitForFunction(() => !document.getElementById('run-pack-btn').disabled, { timeout: 60000 });
+        assert.equal(await extreme.evaluate(() => Packer.layoutSignature(autoPackedItems)), onlyLayout);
+        assert.match(await extreme.$eval('#workspace-status', el => el.textContent), /未找到不同/);
+        console.log('PASS unique exact-fit layout is preserved across all container orientations');
         await extreme.close();
 
         const noWorkers = await browser.newPage();
@@ -142,7 +200,7 @@ async function main() {
         await noWorkers.goto(url, { waitUntil: 'load' });
         await noWorkers.click('#run-pack-btn');
         await noWorkers.waitForFunction(() => !document.getElementById('run-pack-btn').disabled);
-        assert.match(await noWorkers.$eval('#workspace-status', el => el.textContent), /基础布局/);
+        assert.match(await noWorkers.$eval('#workspace-status', el => el.textContent), /基础搜索/);
         assert.equal(await noWorkers.evaluate(() => Packer.validatePackingResult(autoPackedItems, 40, 50, 60).valid), true);
         console.log('PASS browser without Workers returns a marked, valid fallback');
         await noWorkers.close();

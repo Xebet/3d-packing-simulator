@@ -12,7 +12,7 @@ function setup(respond) {
         postMessage(data) { calls.push(data); queueMicrotask(() => respond?.(this, data)); }
         terminate() { this.terminated = true; }
     }
-    const context = { Item, Packer, Worker, navigator: { hardwareConcurrency: 3 }, module: { exports: {} }, AbortController, DOMException, setTimeout, clearTimeout, performance };
+    const context = { Item, Packer, EPS_OVERLAP: 0.001, Worker, navigator: { hardwareConcurrency: 3 }, module: { exports: {} }, AbortController, DOMException, setTimeout, clearTimeout, performance };
     vm.runInNewContext(fs.readFileSync(require.resolve('../packing-jobs.js'), 'utf8'), context);
     const jobs = context.module.exports;
     jobs.createWorker = () => new context.Worker();
@@ -71,5 +71,53 @@ test('worker timeouts release resources and fall back instead of hanging the job
     const result = await jobs.run(items(), [4, 4, 4]);
     assert.equal(result.items.length, 2);
     assert.equal(result.degraded, true);
+    assert.ok(workers.every(worker => worker.terminated));
+});
+
+test('first validated complete result returns without waiting for a stuck losing worker', async () => {
+    const { jobs, workers, context } = setup((worker, data) => {
+        if (workers.indexOf(worker) !== 0) return;
+        const result = new Packer(...data.bin).runGreedyPackTrials(data.items, data.options, 0, 1);
+        worker.onmessage({ data: { result: result.items } });
+    });
+    const timers = new Set();
+    context.setTimeout = (fn, ms) => { const timer = setTimeout(fn, ms); timers.add(timer); return timer; };
+    context.clearTimeout = timer => { timers.delete(timer); clearTimeout(timer); };
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 200);
+    try {
+        const result = await jobs.run(items(), [4, 4, 4], {}, { signal: controller.signal });
+        assert.equal(result.items.length, 2);
+        assert.ok(workers.every(worker => worker.terminated));
+        assert.equal(timers.size, 0);
+    } finally { clearTimeout(timeout); }
+});
+
+test('oversized items are left unpacked without preventing fitting cargo or starting pointless jobs', async () => {
+    const { jobs, calls } = setup();
+    const huge = new Item('huge', 'Huge', 5, 5, 5);
+    const result = await jobs.run([huge], [4, 4, 4]);
+    assert.equal(result.items.length, 0);
+    assert.equal(result.unpacked[0].id, huge.id);
+    assert.equal(calls.length, 0);
+});
+
+test('small layer tasks are dynamically assigned without exceeding the worker limit', async () => {
+    const { jobs, workers, calls } = setup((worker, data) => {
+        setTimeout(() => {
+            const result = data.layer ? null : new Packer(...data.bin).runGreedyPackTrials(data.items, data.options, 0, 1);
+            worker.onmessage({ data: { result } });
+        }, 1);
+    });
+    let activeMaximum = 0;
+    const create = jobs.createWorker;
+    jobs.createWorker = () => {
+        const worker = create();
+        activeMaximum = Math.max(activeMaximum, workers.filter(worker => !worker.terminated).length);
+        return worker;
+    };
+    await jobs.run(items(), [4, 4, 4]);
+    assert.equal(calls.filter(call => call.layer).length, 8);
+    assert.ok(activeMaximum <= 2);
     assert.ok(workers.every(worker => worker.terminated));
 });

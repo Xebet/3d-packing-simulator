@@ -4,4 +4,5 @@
 out_test_suite.txt
 node_modules/
 coverage/
+test-results/
 .DS_Store

@@ -149,6 +149,9 @@
                         <svg aria-hidden="true" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
                         开始计算智能装箱
                     </button>
+                    <button type="button" id="alternative-pack-btn" class="btn btn-secondary" disabled>换一种装箱方式</button>
+                    <button type="button" id="restore-best-btn" class="btn btn-secondary" hidden>恢复最佳方案</button>
+                    <p id="packing-comparison" class="packing-comparison" role="status">计算后可更换方案，最佳结果会保留</p>
 
                     <!-- 分步装载动画栏 (动画播放器) -->
                     <div id="anim-section" style="display: none;">
@@ -519,7 +522,7 @@
                     <div>
                         <span>核心功能：</span>
                         <ul>
-                            <li><strong>多核并行装箱引擎</strong>：在后台拉起与您的 CPU 逻辑核心数匹配的 Web Workers（最多 4 个 Worker，并预留浏览器线程）并发寻优，保持界面可操作。</li>
+                            <li><strong>多核并行装箱引擎</strong>：在后台拉起与您的 CPU 逻辑核心数匹配的 Web Workers（最多 8 个 Worker，并预留浏览器线程）并发寻优，保持界面可操作。</li>
                             <li><strong>混合启发式与回溯算法</strong>：基于 DFS（深度优先回溯）的 2D 划分算法与基于接触面积最大化、高度-深度评分的 3D 贪婪摆放算法相结合，并支持重力稳定性校验（底部接触面积须 &ge; 50%）。</li>
                             <li><strong>容器姿态自动优化</strong>：计算时自动尝试不同的容器倾斜/旋转朝向（如长宽高调换），找到能装入最多货物的最优摆放姿态，并在最终 3D 渲染时自动映射回您输入的原始长宽高，确保物理表现的一致性。</li>
                             <li><strong>双模式三维工作区</strong>：
@@ -553,7 +556,7 @@
                     <div>
                         <span>Key Features:</span>
                         <ul>
-                            <li><strong>Multi-Core Parallel Packer</strong>: Spawns background Web Workers mapped to your hardware threads (up to 4, reserving a logical core for the browser) to calculate packing solutions concurrently with cancellation and bounded fallback.</li>
+                            <li><strong>Multi-Core Parallel Packer</strong>: Spawns background Web Workers mapped to your hardware threads (up to 8, reserving a logical core for the browser) to calculate packing solutions concurrently with cancellation and bounded fallback.</li>
                             <li><strong>Hybrid Backtracking & Heuristics</strong>: Utilizes a DFS-based 2D layer backtracking solver paired with 3D multi-start greedy scoring. Validates physical placement with real-time bottom support ratio checking (&ge; 50%).</li>
                             <li><strong>Orientation Auto-Optimization</strong>: Dynamically tests alternative container aspect ratio rotations during computation under gravity limits, matching the best orientation, and transparently maps results back to your inputs for display.</li>
                             <li><strong>Dual-Mode 3D Workspace</strong>:

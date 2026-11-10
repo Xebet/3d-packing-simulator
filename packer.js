@@ -399,6 +399,33 @@ class Packer {
         this.unpacked = []; // 未能装入的物品
     }
 
+    static shuffled(items, seed) {
+        const copy = [...items], random = Packer.mulberry32(seed);
+        for (let i = copy.length - 1; i > 0; i--) {
+            const j = Math.floor(random() * (i + 1));
+            [copy[i], copy[j]] = [copy[j], copy[i]];
+        }
+        return copy;
+    }
+
+    static layoutSignature(items) {
+        return JSON.stringify(items.map(item => [item.name, item.w, item.h, item.d, item.weight,
+            item.x, item.y, item.z, item.rw, item.rh, item.rd].map(value => typeof value === 'number' ? Math.round(value * 10000) / 10000 : value))
+            .map(values => JSON.stringify(values)).sort());
+    }
+
+    static packingMetrics(items) {
+        return { count: items.length, volume: items.reduce((sum, item) => sum + item.rw * item.rh * item.rd, 0),
+            height: items.reduce((height, item) => Math.max(height, item.y + item.rh), 0) };
+    }
+
+    static comparePackings(a, b) {
+        const left = Packer.packingMetrics(a), right = Packer.packingMetrics(b);
+        if (left.count !== right.count) return left.count - right.count;
+        if (Math.abs(left.volume - right.volume) > EPS_OVERLAP) return left.volume - right.volume;
+        return Math.abs(right.height - left.height) > EPS_OVERLAP ? right.height - left.height : 0;
+    }
+
     static assertItems(items) {
         if (!Array.isArray(items) || items.length > 1000) throw new RangeError('Expected an array of at most 1000 items');
         const ids = new Set();
@@ -424,7 +451,7 @@ class Packer {
         this.unpacked = [];
 
         // 0. 尝试公维对齐层级回溯策略
-        const layerPacked = this.tryLayerBacktrackingPack(itemsToPack, checkStability, supportRatio);
+        const layerPacked = this.tryLayerBacktrackingPack(itemsToPack, checkStability, supportRatio, options);
         if (layerPacked) {
             const validation = Packer.validatePackingResult(
                 layerPacked,
@@ -454,6 +481,7 @@ class Packer {
         Packer.assertItems(itemsToPack);
         if (!Number.isInteger(startTrial) || startTrial < 0 || !Number.isInteger(numTrials) || numTrials < 1 || numTrials > 1000) throw new RangeError('Invalid trial range');
         const deadline = options.timeBudgetMs === undefined ? Infinity : performance.now() + options.timeBudgetMs;
+        if (options.explore) itemsToPack = Packer.shuffled(itemsToPack, options.seed);
         const checkStability = options.checkStability !== false;
         const supportRatio = options.supportRatio !== undefined ? options.supportRatio : DEFAULT_SUPPORT_RATIO;
         if (!Number.isFinite(supportRatio) || supportRatio < 0 || supportRatio > 1) {
@@ -569,7 +597,9 @@ class Packer {
                                maxHeight * scoreWeights.maxHeightPenalty + 
                                totalContact * scoreWeights.contactArea;
 
-            if (trialScore > bestScore) {
+            if (options.excludeSignature && Packer.layoutSignature(currentPacking.items) === options.excludeSignature) continue;
+            const quality = Packer.comparePackings(currentPacking.items, bestPacking.items);
+            if (quality > 0 || (quality === 0 && trialScore > bestScore)) {
                 bestScore = trialScore;
                 bestPacking = {
                     items: currentPacking.items.map(it => {
@@ -586,6 +616,7 @@ class Packer {
                     score: trialScore
                 };
             }
+            if (bestPacking.items.length === itemsToPack.length) break;
         }
 
         return bestPacking;
@@ -866,12 +897,13 @@ class Packer {
     }
 
     // 公维对齐层级回溯策略入口
-    tryLayerBacktrackingPack(itemsToPack, checkStability, supportRatio) {
-        return this.tryLayerBacktrackingPackWithPartitions(itemsToPack, checkStability, supportRatio, 0, 30);
+    tryLayerBacktrackingPack(itemsToPack, checkStability, supportRatio, options = {}) {
+        return this.tryLayerBacktrackingPackWithPartitions(itemsToPack, checkStability, supportRatio, 0, 30, options);
     }
 
     // 支持指定组合范围的层级回溯分发策略
-    tryLayerBacktrackingPackWithPartitions(itemsToPack, checkStability, supportRatio, startPartition, endPartition) {
+    tryLayerBacktrackingPackWithPartitions(itemsToPack, checkStability, supportRatio, startPartition, endPartition, options = {}) {
+        if (options.explore) itemsToPack = Packer.shuffled(itemsToPack, options.seed);
         if (!itemsToPack.length || itemsToPack.length > 128) return null;
         const deadline = performance.now() + 10000;
         if (itemsToPack.reduce((sum, item) => sum + item.w * item.h * item.d, 0) > this.binW * this.binH * this.binD + EPS_OVERLAP) return null;
@@ -958,7 +990,8 @@ class Packer {
         }
 
         // 5. 生成所有可能的分拆方案（按层面积差异与对称性排序）
-        const partitions = this.getPartitions(itemTypes, numLayers, crossW, crossH);
+        const candidates = this.getPartitions(itemTypes, numLayers, crossW, crossH);
+        const partitions = options.explore ? Packer.shuffled(candidates, options.seed) : candidates;
         if (partitions.length === 0) return null;
 
         // 限制索引在有效区间内
@@ -1016,6 +1049,7 @@ class Packer {
 
                 if (!Packer.validatePackingResult(placed3D, this.binW, this.binH, this.binD, checkStability, supportRatio).valid) continue;
 
+                if (options.excludeSignature && Packer.layoutSignature(placed3D) === options.excludeSignature) continue;
                 return placed3D;
             }
         }

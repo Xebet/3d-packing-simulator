@@ -14,7 +14,7 @@ A high-performance, responsive 3D bin packing visualization system built using T
 ## ⚡ Key Features
 
 ### 1. Multi-Core Asynchronous Parallel Packer
-* **Background Workers**: Calculation is offloaded to background `Web Workers` spawned dynamically according to `navigator.hardwareConcurrency` (up to 4 workers, leaving a logical core available for the browser).
+* **Background Workers**: Calculation is offloaded to background `Web Workers` spawned dynamically according to `navigator.hardwareConcurrency` (up to 8 workers, leaving a logical core available for the browser).
 * **Fully Responsive UI**: Search runs in cancellable background jobs. Worker creation failures use two short, time-limited main-thread trials; search depth can be lower in that mode.
 * **CPU Maximization**: Utilizes multi-core CPUs to run greedy strategies in parallel after a bounded layer-search phase.
 
@@ -69,6 +69,20 @@ npm run check
 ```
 
 ---
+
+## Explore another layout
+
+After calculating, select **换一种装箱方式** to explore another packing order, orientation, and layer partition with a different seed. The page compares packed count, volume, and stack height. **恢复最佳方案** restores the best result found for the current inputs.
+
+A different layout is not necessarily better. The best candidate ranks by packed count, then volume, then lower stack height. If the current constraints admit no new layout within the search budget, the existing layout stays visible. Editing the inputs resets the saved best result.
+
+## Randomized testing
+
+`npm run test:random` runs 219 dimension/quantity combinations across three fixed seeds and 72 alternative searches using the production worker source on real Node threads. It independently checks bounds, overlap, support, legal rotation, and item conservation. Some exact-fill fixtures have known capacity; general random cases do not claim a proven optimum.
+
+Set `PACKING_TEST_SEED` to reproduce one input set and `PACKING_TEST_REPORT` to write a JSON report. CI runs these checks and uploads `randomized-packing-report`.
+
+See [the randomized test and performance report](docs/randomized-testing.md).
 
 ## Browser verification
 
